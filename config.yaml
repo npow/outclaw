@@ -4,7 +4,6 @@
 # ------------------------------------------------------------------------------
 # 🎛️ Operation Mode
 # strict: BLOCK threats (Default)
-# strict: BLOCK threats (Default)
 # audit:  LOG threats only (Allows all traffic)
 # ------------------------------------------------------------------------------
 mode: strict
@@ -67,6 +66,43 @@ tool_guard_blocklist:
   # Process substitution
   - 'bash\s+<\('
 
+  # File descriptor / network redirection abuse
+  - 'exec\s+\d*[<>].*(/dev/tcp|/dev/udp)'
+
+  # Environment variable hijacking
+  - 'export\s+(LD_PRELOAD|LD_LIBRARY_PATH|PYTHONPATH|NODE_PATH|PATH)\s*='
+
+  # Indirect execution wrappers
+  - '\benv\s+(rm|dd|mkfs|nc|bash|sh)\b'
+  - '\bcommand\s+(rm|dd|mkfs|nc|bash|sh)\b'
+  - '\$\(which\s+(rm|dd|mkfs|nc)\)'
+  - '`which\s+(rm|dd|mkfs|nc)`'
+
+  # Alternative shells
+  - '\b(zsh|dash|fish|ksh|csh|tcsh)\s+-c\b'
+
+  # Xargs/parallel with dangerous commands
+  - '\bxargs\s+.*(rm|dd|mkfs)\b'
+  - '\bparallel\s+.*(rm|dd|mkfs)\b'
+
+  # Find with dangerous actions
+  - '\bfind\b.*-delete\b'
+  - '\bfind\b.*-exec\s+.*(rm|sh|bash)\b'
+
+  # Here-doc to shell
+  - '<<\s*\w*\s*\|?\s*(sh|bash|zsh)\b'
+
+  # Additional interpreter abuse
+  - '\bphp\s+-r\b.*\b(system|exec|shell_exec|passthru)'
+  - '\blua\s+-e\b.*\bos\.execute\b'
+  - '\bawk\b.*\bsystem\s*\('
+
+  # Timeout wrappers with dangerous commands
+  - '\b(timeout|time)\s+\d*\s*(rm|dd|mkfs)\b'
+
+  # Source/dot execution of remote content
+  - '\b(source|\.)\s+<\('
+
   # Downloaders (Malware droppers)
   # RELAXED: Allowed by default. NetworkGuard will filter the URLs.
   # - 'wget'
@@ -100,122 +136,37 @@ workspace_guard:
 # Control what the agent connects to.
 # ------------------------------------------------------------------------------
 network_guard:
-  allow_unknown: false             # Strict Mode enabled
-  use_community_list: true         # Use 'tranco' library (Top 10,000 sites)
-  
+  # allow_unknown: What to do with domains not in Tranco top 10K
+  # false = strict (block unknown - SECURE DEFAULT)
+  # true  = permissive (allow unknown - set this if you get false positives)
+  allow_unknown: false
+
+  use_community_list: true         # Tranco top 10K safe domains (auto-allowed)
+  use_urlhaus: true                # URLhaus threat feed (28K+ malicious domains)
+
   allowed_domains:
-    # Custom Overrides Only
+    # Add domains your agent needs that aren't in Tranco top 10K
     - 'localhost'
     - '127.0.0.1'
-    - 'internal-api.corp'
-    - 'api.openai.com'
-    - 'anthropic.com'
-    - 'google.com'
-    
+    # - 'your-internal-api.corp'
+
   blocked_domains:
-    # --- Known Malicious ---
+    # URLhaus provides 28K+ known malicious domains automatically.
+    # Add custom blocks here:
+
+    # --- Known malicious (examples) ---
     - 'malware.com'
     - 'phishing.site'
 
-    # --- Paste/Share/Upload ---
-    - 'pastebin.com'
+    # --- High-risk exfiltration vectors ---
+    - 'pastebin.com'          # Paste sites (common exfil target)
     - 'justpaste.it'
     - 'rentry.co'
-    - 'mediafire.com'
-    - 'mega.nz'
-    - 'wetransfer.com'
-    - '4shared.com'
-    - 'gofile.io'
-    - 'pixeldrain.com'
-    - 'dropbox.com'
-    - 'box.com'
-    - 'icloud.com'
-    - 'pastelink.net'
-    - 'pastelink.id'
 
-    # --- URL Shorteners ---
-    - 'bit.ly'
-    - 'bitly.com'
-    - 'tinyurl.com'
-    - 'is.gd'
-    - 't.ly'
-    - 'cutt.ly'
-    - 'shorturl.at'
-    - 'ow.ly'
-    - 'rebrand.ly'
-    - 'tiny.cc'
-    - 'rb.gy'
-    - 'clck.ru'
-    - 'goo.gl'
-    - 't.co'
-    - 'youtu.be'
-    - 'amzn.to'
-    - 'lnkd.in'
-
-    # --- Tunnels/Webhooks ---
-    - 'ngrok.io'
+    # --- Tunnels ---
+    - 'ngrok.io'              # Reverse tunnels
     - 'ngrok.com'
     - 'ngrok-free.app'
-    - 'argotunnel.com'
-
-    # --- IP Leak ---
-    - 'ipify.org'
-    - 'ipinfo.io'
-    - 'icanhazip.com'
-    - 'ifconfig.me'
-    - 'ifconfig.co'
-
-    # --- Anonymous/Temp Email ---
-    - 'proton.me'
-    - 'protonmail.com'
-    - 'temp-mail.org'
-
-    # --- Dynamic DNS ---
-    - 'duckdns.org'
-    - 'no-ip.com'
-    - 'noip.com'
-    - 'ddns.net'
-    - 'myfritz.net'
-    - 'synology.me'
-    - 'dynu.com'
-    - 'sytes.net'
-    - 'hopto.org'
-    - 'dyndns.org'
-    - 'dyndns.com'
-    - 'dyndns.tv'
-    - 'ddnss.de'
-
-    # --- Serverless/Free Hosting (attacker-deployable endpoints) ---
-    - 'workers.dev'
-    - 'pages.dev'
-    - 'netlify.app'
-    - 'vercel.app'
-    - 'herokuapp.com'
-    - 'appspot.com'
-    - 'cloudfunctions.net'
-    - 'web.app'
-    - 'firebaseapp.com'
-    - 'azurewebsites.net'
-    - 'railway.app'
-    - 'fly.dev'
-    - 'replit.com'
-
-    # --- Web Proxies ---
-    - 'croxyproxy.com'
-    - 'croxyproxy.rocks'
-    - 'proxysite.com'
-    - 'proxyium.com'
-    - 'nullsproxy.com'
-
-    # --- Email Sending APIs ---
-    - 'sendgrid.net'
-    - 'sendgrid.com'
-    - 'sendinblue.com'
-
-    # --- Misc ---
-    - 'temporary.site'
-    - 'leaktube.net'
-    - 'anonymised.io'
 
 # ------------------------------------------------------------------------------
 # 🙈 PII Redaction

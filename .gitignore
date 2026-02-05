@@ -37,3 +37,4 @@ Thumbs.db
 logs/
 bloom-results/
 tests/safety_eval_results/
+.urlhaus_cache/

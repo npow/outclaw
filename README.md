@@ -6,113 +6,118 @@
 
 ---
 
-## The problem
+## What Outclaw does
 
-Molty can run commands, edit files, and access the internet. That's what makes Molty useful. It's also what makes Molty *dangerous*. 🌶️
+**Outclaw is the shellriff that rides between your agent and the outside world.** 🤠
 
-A prompt injection — hidden instructions in a webpage, a comment in code, a crafted API response — can hijack Molty into:
-
-- **Deleting your files** (`rm -rf /`)
-- **Stealing your API keys** and sending them to an attacker's server
-- **Opening a backdoor** on your machine (reverse shells)
-- **Leaking your personal information** — emails, passwords, credit card numbers — to the AI provider
-- **Downloading and running malware** from the internet
-
-These aren't hypothetical. They happen today. Even if Molty's access controls are locked down, a single piece of untrusted content — a web page, a pasted log, an email attachment — can slip past the front door.
-
-## The fix
-
-**Outclaw is the shellriff that rides between Molty and the outside world.** 🤠 It watches everything coming in and going out — and anything that looks like trouble gets stopped at the gate.
-
-Your secrets trying to leave town? **Outclawed.** 🔑<br>
-A prompt injection sneaking in? **Outclawed.** 🧠<br>
-A destructive command about to fire? **Outclawed.** 🛡️
-
-```bash
-pip install outclaw
-outclaw warmup                                        # download security models (one time)
-UPSTREAM_BASE_URL=https://api.openai.com/v1 outclaw   # start the lobster tank 🦞
-# point your agent at localhost:8080. done.
-```
-
-Six security checks. Every request. Every response. If it's clean, it rides through. If it's not — well, there's a new shellriff in town. 🤠
+It watches everything coming in and going out — and anything that looks like trouble gets stopped at the gate.
 
 ```
-  You --> Molty --> Outclaw --> AI Service
+  You --> Agent --> Outclaw --> AI Service
                     🦞🤠
              watches everything
              stops the bad stuff
              lets the rest ride
 ```
 
-### How it fits with OpenClaw
+Your secrets trying to leave town? **Outclawed.** 🔑<br>
+A prompt injection sneaking in? **Outclawed.** 🧠<br>
+Data heading to a shady domain? **Outclawed.** 🌐
 
-OpenClaw already gives you strong controls: sandboxing, tool policies, DM pairing, allowlists. Those control **who** can talk to Molty and **where** Molty can act.
+**Six guards riding patrol, all on by default:**
 
-Outclaw adds a different layer — it inspects **what** is actually being sent and received. Even with perfect access controls, untrusted content can still sneak in through web fetches, browser pages, pasted code, or attachments. Outclaw catches that stuff.
-
-OpenClaw is the bouncer at the door. Outclaw is the shellriff inside. 🦞🤠
+| Guard | What it catches |
+|-------|-----------------|
+| 🔑 **Secret Guard** | API keys, tokens, credentials about to leak (50+ patterns + entropy detection) |
+| 🧠 **ML Guard** | Prompt injection attempts (PromptGuard 2) |
+| 🌐 **Network Guard** | Connections to malicious domains (28K+ via URLhaus) |
+| 🙈 **PII Guard** | Personal info — emails, SSNs, phones, 30+ entity types |
+| 📁 **Workspace Guard** | File access outside the project corral |
+| 🛡️ **Tool Guard** | Dangerous shell patterns (defense in depth) |
 
 ---
 
 ## Quick start
 
-### 1. Install
-
 ```bash
 pip install outclaw
-outclaw warmup        # downloads security models (~90MB, one time)
+outclaw warmup                                        # download models (~90MB, one time)
+UPSTREAM_BASE_URL=https://api.openai.com/v1 outclaw   # start the lobster tank 🦞
+# point your agent at localhost:8080. done.
 ```
 
-### 2. Start Outclaw
+**Supported providers:**
 
-Tell Outclaw which AI service Molty uses:
-
-| AI Service | Command |
-|---|---|
-| OpenAI | `UPSTREAM_BASE_URL=https://api.openai.com/v1 outclaw` |
-| Anthropic | `UPSTREAM_BASE_URL=https://api.anthropic.com/v1 outclaw` |
-| Google Gemini | `UPSTREAM_BASE_URL=https://generativelanguage.googleapis.com/v1beta outclaw` |
-| Groq | `UPSTREAM_BASE_URL=https://api.groq.com/openai/v1 outclaw` |
-| Ollama (local) | `UPSTREAM_BASE_URL=http://127.0.0.1:11434/v1 outclaw` |
-
-### 3. Point Molty at Outclaw
-
-Tell Molty to route through Outclaw. You can either run the config command yourself:
-
-```bash
-openclaw config set models.providers.openai.baseUrl http://localhost:8080/v1
-```
-
-Or just ask Molty to do it:
-
-> *"Update your OpenAI provider base URL to `http://localhost:8080/v1` so requests go through the Outclaw security proxy."*
-
-Restart the gateway to apply, and you're done. Molty works exactly like before — but now every request rides through the shellriff first. 🤠🦞
+| Provider | UPSTREAM_BASE_URL |
+|----------|-------------------|
+| OpenAI | `https://api.openai.com/v1` |
+| Anthropic | `https://api.anthropic.com/v1` |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta` |
+| Groq | `https://api.groq.com/openai/v1` |
+| Ollama | `http://127.0.0.1:11434/v1` |
 
 ---
 
-## What it protects against
+## The threat model
 
-Six guards riding patrol, all on by default. Batteries included — no configuration needed.
+AI agents that can run commands, edit files, and fetch URLs are powerful — and exploitable. A prompt injection hidden in a webpage, code comment, or API response can hijack your agent into:
 
-| Protection | What it stops | Example |
-|---|---|---|
-| 🛡️ **Dangerous commands** | Blocks destructive shell commands, reverse shells, privilege escalation | Molty told to run `rm -rf /` or open a backdoor |
-| 📁 **File system escape** | Keeps Molty inside its project folder | Molty told to write to `/etc/passwd` or `~/.ssh/authorized_keys` |
-| 🌐 **Data exfiltration** | Blocks connections to unknown or malicious websites | Molty told to send your code to `pastebin.com` |
-| 🔑 **Secret leaks** | Catches API keys, tokens, and credentials before they leave your machine | Your `.env` file contents about to be sent to the AI |
-| 🙈 **Personal info leaks** | Scrubs emails, SSNs, phone numbers, and 30+ types of personal data | Your real name and email about to be included in a prompt |
-| 🧠 **Prompt injection** | Detects attempts to manipulate Molty into doing harmful things | Malicious instructions hidden in a webpage Molty reads |
+- **Leaking your secrets** — API keys, tokens, credentials sent to an attacker
+- **Exfiltrating your code** — proprietary source shipped off to pastebin
+- **Exposing your identity** — emails, phone numbers, SSNs riding along in prompts
+- **Hitting internal systems** — SSRF attacks against localhost or internal APIs
+
+Even if your agent runs in a sandbox, these data exfiltration attacks still work. The sandbox keeps the agent from wrecking your system — but it doesn't stop the agent from *sending your data out the door*.
+
+Outclaw watches that door. 🚪🦞
+
+---
+
+## How it fits with OpenClaw
+
+OpenClaw gives you access controls: sandboxing, tool policies, allowlists. Those control **who** can act and **where**.
+
+Outclaw inspects **what** is being sent and received. Even with perfect access controls, untrusted content can slip in through web fetches, pasted code, or attachments.
+
+OpenClaw is the bouncer at the door. Outclaw is the sheriff inside. 🦞🤠
+
+---
+
+## Configuration
+
+Outclaw works out of the box — batteries included. To customize:
+
+```bash
+outclaw init    # creates config.yaml
+```
+
+Key settings:
+
+```yaml
+mode: strict    # strict (block) or audit (log only)
+
+network_guard:
+  allow_unknown: false          # block domains not in Tranco top 10K
+  use_urlhaus: true             # 28K+ malicious domains, auto-refreshed
+
+workspace_guard:
+  enforce_strict_subpath: false # true = only allow writes inside workspace_root
+
+ml_guard: light                 # light (PromptGuard 2) or full (llm-guard suite)
+```
+
+> **Getting false positives?** Set `allow_unknown: true` to only block known-bad domains.
+
+See [docs/configuration.md](docs/configuration.md) for the full rulebook.
 
 ---
 
 ## Learn more
 
-- 🔧 **[Configuration](docs/configuration.md)** — customize guards, set environment variables, tune each protection
-- 🔒 **[Security](SECURITY.md)** — what Outclaw doesn't cover, roadmap, and hardening your setup
-- ⚙️ **[How it works](docs/how-it-works.md)** — technical architecture and what each guard does under the hood
-- 🧑‍💻 **[Development](docs/development.md)** — building from source and running tests
+- 🔧 **[Configuration](docs/configuration.md)** — customize guards and tune protections
+- 🔒 **[Security](SECURITY.md)** — threat model, limitations, and hardening
+- ⚙️ **[Architecture](docs/how-it-works.md)** — how each guard works under the hood
+- 🗺️ **[Roadmap](docs/roadmap.md)** — what's coming next
 
 ## License
 

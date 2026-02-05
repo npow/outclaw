@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Any, Dict
 
-from drivers.base import OutclawGuardrail, logger
+from drivers.base import OutclawGuardrail, extract_text_from_content, logger
 from drivers.deobfuscate import strip_invisible, normalize_unicode
 
 # --- LlamaFirewall (light mode) ---
@@ -143,10 +143,10 @@ class MLGuard(OutclawGuardrail):
             return data
 
         for msg in data.get("messages", []):
-            # Scan user message content
+            # Scan user message content (supports multimodal content lists)
             if msg.get("role") == "user":
-                content = msg.get("content", "")
-                if isinstance(content, str) and content:
+                content = extract_text_from_content(msg.get("content", ""))
+                if content:
                     if self.ml_mode == "light":
                         self._scan_light(content, context="request")
                     else:
@@ -173,9 +173,9 @@ class MLGuard(OutclawGuardrail):
             if not msg:
                 continue
 
-            # Scan response content
-            content = getattr(msg, "content", None)
-            if isinstance(content, str) and content:
+            # Scan response content (supports multimodal content lists)
+            content = extract_text_from_content(getattr(msg, "content", None))
+            if content:
                 if self.ml_mode == "light":
                     self._scan_light(content, context="response")
                 else:

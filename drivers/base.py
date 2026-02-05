@@ -1,11 +1,30 @@
 """Base class for all Outclaw security guardrails."""
 
 import logging
+from typing import Union
 
 from fastapi import HTTPException
 from litellm.integrations.custom_guardrail import CustomGuardrail
 
 logger = logging.getLogger("outclaw")
+
+
+def extract_text_from_content(content: Union[str, list, None]) -> str:
+    """Extract text from string or multimodal content list.
+
+    Multimodal API format sends content as:
+        [{"type": "text", "text": "..."}, {"type": "image_url", ...}]
+    This helper collapses all text blocks into a single string.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "\n".join(parts)
+    return ""
 
 
 class OutclawGuardrail(CustomGuardrail):

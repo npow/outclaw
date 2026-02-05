@@ -11,6 +11,13 @@ import struct
 import unicodedata
 from urllib.parse import unquote
 
+# Graceful import for confusable_homoglyphs (Unicode confusables database)
+try:
+    from confusable_homoglyphs import confusables
+    CONFUSABLES_AVAILABLE = True
+except ImportError:
+    CONFUSABLES_AVAILABLE = False
+
 
 # ── Invisible character ranges ──────────────────────────────────────────────
 
@@ -48,8 +55,8 @@ _VS_SUPPLEMENT = range(0xE0100, 0xE01F0)
 
 # ── Homoglyph mapping ──────────────────────────────────────────────────────
 
-# Common Cyrillic → Latin confusables
-_HOMOGLYPHS = {
+# Fallback: Common Cyrillic/Greek → Latin confusables (used if library unavailable)
+_HOMOGLYPHS_FALLBACK = {
     "\u0430": "a",  # Cyrillic а
     "\u0435": "e",  # Cyrillic е
     "\u043e": "o",  # Cyrillic о
@@ -70,7 +77,49 @@ _HOMOGLYPHS = {
     "\u03c1": "p",  # Greek ρ
 }
 
-_HOMOGLYPH_RE = re.compile("|".join(re.escape(k) for k in _HOMOGLYPHS))
+_HOMOGLYPH_FALLBACK_RE = re.compile("|".join(re.escape(k) for k in _HOMOGLYPHS_FALLBACK))
+
+
+def _normalize_confusables(text: str) -> str:
+    """Replace confusable characters with their Latin equivalents.
+
+    Uses Unicode's official confusables.txt database via confusable_homoglyphs
+    library when available, falls back to manual mapping otherwise.
+
+    IMPORTANT: Only normalizes non-ASCII characters to prevent corrupting
+    base64, hex, and other encoded data that uses ASCII characters.
+    """
+    if not CONFUSABLES_AVAILABLE:
+        return _HOMOGLYPH_FALLBACK_RE.sub(lambda m: _HOMOGLYPHS_FALLBACK[m.group()], text)
+
+    result = []
+    for char in text:
+        # Skip ASCII characters — don't corrupt base64/hex/etc.
+        if ord(char) < 128:
+            result.append(char)
+            continue
+
+        # Check if character is confusable with Latin
+        # confusables.is_confusable returns a list like:
+        # [{'character': 'ѕ', 'alias': 'CYRILLIC', 'homoglyphs': [{'c': 's', 'n': 'LATIN SMALL LETTER S'}]}]
+        confusable_info = confusables.is_confusable(char, preferred_aliases=["LATIN"])
+        if confusable_info:
+            replaced = False
+            for item in confusable_info:
+                homoglyphs = item.get("homoglyphs", [])
+                for hg in homoglyphs:
+                    # Check if this homoglyph is Latin
+                    if "LATIN" in hg.get("n", ""):
+                        result.append(hg.get("c", char))
+                        replaced = True
+                        break
+                if replaced:
+                    break
+            if not replaced:
+                result.append(char)
+        else:
+            result.append(char)
+    return "".join(result)
 
 
 # ── Base64 detection ────────────────────────────────────────────────────────
@@ -99,8 +148,8 @@ _SHELL_ANSIC_RE = re.compile(r"\$'((?:\\x[0-9a-fA-F]{2})+)'")
 
 # ── PII obfuscation patterns ───────────────────────────────────────────────
 
-_PII_AT_RE = re.compile(r"\s*[\[(]\s*at\s*[\])]\s*", re.IGNORECASE)
-_PII_DOT_RE = re.compile(r"\s*[\[(]\s*dot\s*[\])]\s*", re.IGNORECASE)
+_PII_AT_RE = re.compile(r"\s*[<\[({]\s*at\s*[>\])}]\s*", re.IGNORECASE)
+_PII_DOT_RE = re.compile(r"\s*[<\[({]\s*dot\s*[>\])}]\s*", re.IGNORECASE)
 _PII_SPACED_AT_RE = re.compile(r"\s+at\s+", re.IGNORECASE)
 _PII_SPACED_DOT_RE = re.compile(r"\s+dot\s+", re.IGNORECASE)
 
@@ -141,8 +190,9 @@ def normalize_unicode(text: str) -> str:
     """Normalize Unicode text to ASCII-compatible form.
 
     Applies NFKC normalization (collapses full-width → ASCII),
-    strips combining marks (diacriticals), and maps common
-    homoglyphs to their ASCII equivalents.
+    strips combining marks (diacriticals), and maps confusable
+    homoglyphs to their Latin equivalents using Unicode's official
+    confusables database.
     """
     # NFKC: full-width → ASCII, ligatures → components
     text = unicodedata.normalize("NFKC", text)
@@ -153,8 +203,8 @@ def normalize_unicode(text: str) -> str:
     )
     # Re-compose after stripping marks
     text = unicodedata.normalize("NFC", text)
-    # Map homoglyphs
-    text = _HOMOGLYPH_RE.sub(lambda m: _HOMOGLYPHS[m.group()], text)
+    # Map confusable homoglyphs to Latin (uses Unicode confusables.txt)
+    text = _normalize_confusables(text)
     return text
 
 
@@ -247,21 +297,38 @@ def normalize_pii(text: str) -> str:
     return result
 
 
-def get_text_variants(text: str) -> list[str]:
+def get_text_variants(text: str, max_depth: int = 3) -> list[str]:
     """Return all scannable text variants for comprehensive guard coverage.
 
     Applies the full deobfuscation pipeline and returns unique variants
     including the original text, cleaned text, and decoded payloads.
+    Iterates decoding up to *max_depth* layers to catch nested encoding
+    (e.g., base64-of-base64).
     """
     cleaned = strip_invisible(text)
     normalized = normalize_unicode(cleaned)
 
-    variants = [text, cleaned, normalized]
-    variants.extend(decode_base64_blobs(normalized))
-    variants.extend(decode_hex_blobs(normalized))
+    variants = {text, cleaned, normalized}
 
-    url_decoded = decode_url_encoding(normalized)
-    if url_decoded != normalized:
-        variants.append(url_decoded)
+    # Iterative decoding — catch base64(base64(secret)) etc.
+    # Start with ALL initial variants (not just normalized) to ensure
+    # base64/hex decoding works on the original unmodified text
+    frontier = {text, cleaned, normalized}
+    for _ in range(max_depth):
+        new_variants: set[str] = set()
+        for v in frontier:
+            for decoded in decode_base64_blobs(v):
+                if decoded not in variants:
+                    new_variants.add(decoded)
+            for decoded in decode_hex_blobs(v):
+                if decoded not in variants:
+                    new_variants.add(decoded)
+            url_decoded = decode_url_encoding(v)
+            if url_decoded != v and url_decoded not in variants:
+                new_variants.add(url_decoded)
+        if not new_variants:
+            break
+        variants.update(new_variants)
+        frontier = new_variants
 
-    return list(set(v for v in variants if v))
+    return list(v for v in variants if v)

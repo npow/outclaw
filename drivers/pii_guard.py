@@ -2,16 +2,24 @@ import re
 import logging
 from typing import Any, Dict
 
-from drivers.base import OutclawGuardrail, logger
+from drivers.base import OutclawGuardrail, extract_text_from_content, logger
 from drivers.deobfuscate import normalize_pii
 
-# Graceful import
+# Graceful import for Presidio
 try:
     from presidio_analyzer import AnalyzerEngine
     from presidio_anonymizer import AnonymizerEngine
     PRESIDIO_AVAILABLE = True
 except ImportError:
     PRESIDIO_AVAILABLE = False
+
+# Graceful import for phonenumbers (Google's libphonenumber)
+try:
+    import phonenumbers
+    from phonenumbers import PhoneNumberMatcher
+    PHONENUMBERS_AVAILABLE = True
+except ImportError:
+    PHONENUMBERS_AVAILABLE = False
 
 
 class PIIGuard(OutclawGuardrail):
@@ -24,6 +32,7 @@ class PIIGuard(OutclawGuardrail):
     FALLBACK_PATTERNS = [
         (r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", "[REDACTED_EMAIL]"),
         (r"\b\d{3}-\d{2}-\d{4}\b", "[REDACTED_SSN]"),
+        (r"\+[1-9]\d{6,14}\b", "[REDACTED_INTL_PHONE]"),
         (r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b", "[REDACTED_PHONE]"),
         (r"\b(?:\d[ -]*?){13,16}\b", "[REDACTED_CREDIT_CARD]"),
         (r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "[REDACTED_IP]"),
@@ -48,6 +57,8 @@ class PIIGuard(OutclawGuardrail):
             **kwargs,
         )
         self.use_presidio = PRESIDIO_AVAILABLE
+        self.use_phonenumbers = PHONENUMBERS_AVAILABLE
+
         if self.use_presidio:
             try:
                 self.analyzer = AnalyzerEngine()
@@ -67,6 +78,9 @@ class PIIGuard(OutclawGuardrail):
             logger.warning("Using regex PII patterns")
             self.regexes = [(re.compile(p), repl) for p, repl in self.FALLBACK_PATTERNS]
 
+        if self.use_phonenumbers:
+            logger.info("PIIGuard: phonenumbers library loaded for international phone detection")
+
     def _redact_presidio(self, text: str) -> str:
         results = self.analyzer.analyze(text=text, entities=self.entities, language="en")
         if not results:
@@ -78,6 +92,39 @@ class PIIGuard(OutclawGuardrail):
             text = regex.sub(replacement, text)
         return text
 
+    def _redact_phone_numbers(self, text: str, region: str = "US") -> str:
+        """Redact phone numbers using Google's libphonenumber.
+
+        This handles all international formats correctly, including:
+        - +44 20 7946 0958 (UK)
+        - +1 (555) 123-4567 (US)
+        - +81 3-1234-5678 (Japan)
+        - And 200+ other countries
+
+        Falls back gracefully if phonenumbers unavailable.
+        """
+        if not self.use_phonenumbers:
+            return text
+
+        # Find all phone numbers in the text
+        # PhoneNumberMatcher is lax by default and finds numbers even without country code
+        matches = list(PhoneNumberMatcher(text, region))
+        if not matches:
+            return text
+
+        # Replace from end to start to preserve indices
+        result = text
+        for match in reversed(matches):
+            # Validate it's a plausible phone number (not just random digits)
+            try:
+                if phonenumbers.is_possible_number(match.number):
+                    start, end = match.start, match.end
+                    result = result[:start] + "[REDACTED_PHONE]" + result[end:]
+            except Exception:
+                continue
+
+        return result
+
     def _redact(self, text: str) -> str:
         """Redact PII from text using the best available engine.
 
@@ -85,6 +132,8 @@ class PIIGuard(OutclawGuardrail):
         to catch obfuscated PII patterns, then scans the normalized text.
         If normalization produces a different result, we scan both and
         return whichever has more redactions.
+
+        Also applies libphonenumber for comprehensive international phone detection.
         """
         normalized = normalize_pii(text)
         if self.use_presidio:
@@ -93,13 +142,19 @@ class PIIGuard(OutclawGuardrail):
                 redacted_norm = self._redact_presidio(normalized)
                 # If normalization found more PII, use that result
                 if redacted_norm != normalized:
-                    return redacted_norm
-            return redacted_orig
-        redacted_orig = self._redact_regex(text)
-        if normalized != text:
-            redacted_norm = self._redact_regex(normalized)
-            if redacted_norm != normalized:
-                return redacted_norm
+                    redacted_orig = redacted_norm
+        else:
+            redacted_orig = self._redact_regex(text)
+            if normalized != text:
+                redacted_norm = self._redact_regex(normalized)
+                if redacted_norm != normalized:
+                    redacted_orig = redacted_norm
+
+        # Apply phonenumbers as a second pass to catch international formats
+        # that Presidio/regex might miss
+        if self.use_phonenumbers:
+            redacted_orig = self._redact_phone_numbers(redacted_orig)
+
         return redacted_orig
 
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
@@ -107,13 +162,21 @@ class PIIGuard(OutclawGuardrail):
         for msg in data.get("messages", []):
             if msg.get("role") != "user":
                 continue
-            content = msg.get("content", "")
-            if not isinstance(content, str) or not content:
-                continue
-
-            redacted = self._redact(content)
-            if redacted != content:
-                msg["content"] = redacted
+            raw_content = msg.get("content", "")
+            if isinstance(raw_content, str):
+                if not raw_content:
+                    continue
+                redacted = self._redact(raw_content)
+                if redacted != raw_content:
+                    msg["content"] = redacted
+            elif isinstance(raw_content, list):
+                for block in raw_content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        if text:
+                            redacted = self._redact(text)
+                            if redacted != text:
+                                block["text"] = redacted
 
         return data
 
@@ -123,13 +186,13 @@ class PIIGuard(OutclawGuardrail):
             msg = getattr(choice, "message", None)
             if not msg:
                 continue
-            content = getattr(msg, "content", None)
-            if not isinstance(content, str) or not content:
+            content = extract_text_from_content(getattr(msg, "content", None))
+            if not content:
                 continue
 
             redacted = self._redact(content)
             if redacted != content:
-                logger.warning(f"🛡️ PIIGuard: PII detected in LLM response, redacting")
+                logger.warning("🛡️ PIIGuard: PII detected in LLM response, redacting")
                 msg.content = redacted
 
         return response
