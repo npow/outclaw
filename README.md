@@ -78,13 +78,17 @@ Tell Outclaw which AI service Molty uses:
 
 ### 3. Point Molty at Outclaw
 
-Change Molty's API base URL to `http://localhost:8080/v1`:
+Tell Molty to route through Outclaw. You can either run the config command yourself:
 
 ```bash
 openclaw config set models.providers.openai.baseUrl http://localhost:8080/v1
 ```
 
-That's it. Molty works exactly like before — but now every request rides through the shellriff first. 🤠🦞
+Or just ask Molty to do it:
+
+> *"Update your OpenAI provider base URL to `http://localhost:8080/v1` so requests go through the Outclaw security proxy."*
+
+Restart the gateway to apply, and you're done. Molty works exactly like before — but now every request rides through the shellriff first. 🤠🦞
 
 ---
 
