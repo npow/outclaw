@@ -30,7 +30,7 @@ Data heading to a shady domain? **Outclawed.** 🌐
 |-------|-----------------|
 | 🔑 **Secret Guard** | API keys, tokens, credentials about to leak (50+ patterns + entropy detection) |
 | 🧠 **ML Guard** | Prompt injection attempts (PromptGuard 2) |
-| 🌐 **Network Guard** | Connections to malicious domains (28K+ via URLhaus) |
+| 🌐 **Network Guard** | Blocks malicious domains (URLhaus) + allows only known-safe (Tranco top 10K) |
 | 🙈 **PII Guard** | Personal info — emails, SSNs, phones, 30+ entity types |
 | 📁 **Workspace Guard** | File access outside the project corral |
 | 🛡️ **Tool Guard** | Dangerous shell patterns (defense in depth) |
