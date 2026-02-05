@@ -1,9 +1,17 @@
 # Configuration
 
-Outclaw works out of the box with zero configuration. If you want to customize it, edit `config.yaml`:
+Outclaw works out of the box with secure defaults. To customize:
+
+```bash
+outclaw init    # creates config.yaml in current directory
+```
+
+---
+
+## Global Settings
 
 ```yaml
-mode: strict       # strict = block threats, audit = log only
+mode: strict       # strict = block threats, audit = log only (for testing)
 
 drivers:
   tool_guard: true       # dangerous commands
@@ -14,62 +22,220 @@ drivers:
   llm_guard: true        # prompt injection (ML-based)
 ```
 
+---
+
 ## Guards
 
-<details>
-<summary>Network Guard — control which websites the agent can access</summary>
+### 🔑 Secret Guard
+
+Detects API keys, tokens, and credentials before they leave your machine.
+
+**Detection layers (all active by default):**
+
+| Layer | What it catches |
+|-------|-----------------|
+| **Regex patterns** | 50+ patterns for AWS, OpenAI, Anthropic, Stripe, GitHub, Twilio, etc. |
+| **detect-secrets plugins** | 20+ detectors including JWT, private keys, basic auth |
+| **Entropy-based detection** | High-entropy strings near keywords like `key=`, `token=`, `secret=` |
+| **Deobfuscation** | Base64-encoded, hex-encoded, and Unicode-obfuscated secrets |
+
+```yaml
+# No configuration needed — all layers active by default
+# To allowlist your own API key (so it doesn't get flagged):
+secret_guard_allowlist:
+  - "sk-your-own-key-here"
+```
+
+---
+
+### 🌐 Network Guard
+
+Controls which domains the agent can connect to.
+
+**Detection layers:**
+
+| Layer | What it does |
+|-------|--------------|
+| **URLhaus blacklist** | 28K+ known malware domains, auto-refreshed daily |
+| **Tranco whitelist** | Top 10K popular domains (google.com, github.com, etc.) |
+| **publicsuffix parsing** | Correctly handles TLDs (evil.co.uk vs safe.co.uk) |
+| **IPv6 detection** | Blocks localhost/private network access via IPv6 |
+| **Scheme blocking** | Blocks file://, ftp://, gopher://, etc. |
 
 ```yaml
 network_guard:
-  allow_unknown: false             # block websites not on any list
-  use_community_list: true         # auto-allow top 10,000 popular websites
+  # What to do with unknown domains (not in Tranco or your lists)
+  allow_unknown: false        # false = block unknown (secure), true = allow unknown
+
+  # External lists
+  use_community_list: true    # Tranco top 10K whitelist
+  use_urlhaus: true           # URLhaus malware blacklist
+
+  # Your custom lists
   allowed_domains:
     - 'localhost'
-    - 'api.openai.com'
+    - '127.0.0.1'
+    - 'your-internal-api.corp'
+
   blocked_domains:
     - 'pastebin.com'
     - 'ngrok.io'
 ```
-</details>
 
-<details>
-<summary>Workspace Guard — control where the agent can write files</summary>
+---
+
+### 🛡️ Tool Guard
+
+Blocks dangerous shell commands and patterns.
+
+**Detection layers:**
+
+| Layer | What it does |
+|-------|--------------|
+| **bashlex AST parsing** | Parses shell commands into syntax tree — catches obfuscation automatically |
+| **Regex patterns** | 40+ patterns for reverse shells, privilege escalation, etc. |
+| **Allow-list mode** | Optional: only permit specific commands (whitelist-only) |
+| **Deobfuscation** | Strips Unicode tricks, empty quotes, hex escapes |
 
 ```yaml
-workspace_guard:
-  workspace_root: "."              # the folder the agent is allowed to work in
-  enforce_strict_subpath: false    # when true, blocks ALL writes outside workspace_root
-```
-</details>
-
-<details>
-<summary>Tool Guard — customize which commands are blocked</summary>
-
-```yaml
+# Default: blocklist mode (block known-bad, allow everything else)
 tool_guard_blocklist:
-  - 'rm\s+-[rRf]+'      # recursive delete
-  - 'bash\s+-i'          # interactive bash (reverse shell)
-  - '\bssh\b'            # SSH connections
-  # see config.yaml for the full list
-```
-</details>
+  - 'rm\s+-[rRf]+'           # recursive delete
+  - 'bash\s+-i'              # interactive bash
+  - '\bssh\b'                # SSH connections
+  # see config.yaml for full list
 
-<details>
-<summary>PII Guard — choose which personal info to scrub</summary>
+# Optional: allowlist mode (block everything except these)
+tool_guard_allowed_commands:
+  - 'ls'
+  - 'cat'
+  - 'grep'
+  - 'git'
+  # when set, ONLY these commands are permitted
+```
+
+---
+
+### 🙈 PII Guard
+
+Redacts personal information from prompts before they reach the AI.
+
+**Detection layers:**
+
+| Layer | What it catches |
+|-------|-----------------|
+| **Presidio NER** | 30+ entity types using spaCy NLP models |
+| **phonenumbers** | International phone numbers (200+ countries via libphonenumber) |
+| **Regex fallback** | Email, SSN, credit card, IP address patterns |
+| **Deobfuscation** | Catches `user [at] example [dot] com` tricks |
 
 ```yaml
 pii_redact:
   - email
   - phone_us
   - ssn
+  # Presidio supports: EMAIL_ADDRESS, PHONE_NUMBER, US_SSN, CREDIT_CARD,
+  # IP_ADDRESS, US_PASSPORT, US_DRIVER_LICENSE, IBAN_CODE, PERSON, LOCATION, etc.
 ```
-</details>
 
-## Environment variables
+---
+
+### 🧠 ML Guard
+
+Detects prompt injection attempts using ML models.
+
+**Mode options:**
+
+| Mode | Model | Size | Speed |
+|------|-------|------|-------|
+| `light` | PromptGuard 2 (LlamaFirewall) | ~90MB | Fast |
+| `full` | llm-guard ONNX suite | ~500MB | Slower |
+| `off` | Disabled | — | — |
+
+```yaml
+ml_guard: light    # light, full, or off
+
+# 'full' mode requires: pip install outclaw[heavy]
+```
+
+---
+
+### 📁 Workspace Guard
+
+Keeps file access inside the project directory.
+
+**Protection layers:**
+
+| Layer | What it blocks |
+|-------|----------------|
+| **Path traversal** | `../` and URL-encoded variants (`%2e%2e%2f`) |
+| **Dangerous roots** | `/etc`, `/var`, `/root`, `/proc`, `/sys`, etc. |
+| **Sensitive dotfiles** | `~/.ssh`, `~/.aws`, `~/.gnupg`, etc. |
+| **Device files** | `/dev/sda`, `/dev/mem`, etc. (allows `/dev/null`) |
+| **Null bytes** | Null byte injection in paths |
+| **Symlink escape** | Checks symlink targets, not just paths |
+
+```yaml
+workspace_guard:
+  workspace_root: "."           # the folder the agent works in
+  enforce_strict_subpath: false # true = ONLY allow writes inside workspace_root
+                                # false = block dangerous paths but allow others
+```
+
+---
+
+## Environment Variables
 
 | Variable | Default | What it does |
-|---|---|---|
-| `UPSTREAM_BASE_URL` | `https://api.openai.com/v1` | The AI service to connect to |
-| `API_KEY` | (none) | Your API key for the AI service (Outclaw passes it through) |
-| `OUTCLAW_TOKEN` | (none) | Password-protect the Outclaw proxy itself |
+|----------|---------|--------------|
+| `UPSTREAM_BASE_URL` | `https://api.openai.com/v1` | The AI service to proxy to |
+| `API_KEY` | (none) | Your API key (passed through to upstream) |
+| `OUTCLAW_TOKEN` | (none) | Password-protect the Outclaw proxy |
 | `PORT` | `8080` | Port Outclaw listens on |
+
+---
+
+## Example: Strict lockdown config
+
+For high-security environments:
+
+```yaml
+mode: strict
+
+network_guard:
+  allow_unknown: false
+  use_community_list: true
+  use_urlhaus: true
+  allowed_domains:
+    - 'api.openai.com'
+
+workspace_guard:
+  enforce_strict_subpath: true
+  workspace_root: "/app/workspace"
+
+tool_guard_allowed_commands:
+  - 'ls'
+  - 'cat'
+  - 'grep'
+
+ml_guard: full
+```
+
+---
+
+## Example: Permissive config
+
+For development/testing (still protected against known-bad):
+
+```yaml
+mode: strict
+
+network_guard:
+  allow_unknown: true      # allow unknown domains
+  use_urlhaus: true        # but still block known malware
+
+workspace_guard:
+  enforce_strict_subpath: false
+
+ml_guard: light
+```
