@@ -24,9 +24,9 @@ These aren't hypothetical. They happen today. Even if Molty's access controls ar
 
 **Outclaw is the shellriff that rides between Molty and the outside world.** 🤠 It watches everything coming in and going out — and anything that looks like trouble gets stopped at the gate.
 
-Your secrets trying to leave town? Outclawed. 🔑
-A prompt injection sneaking in? Outclawed. 🧠
-A destructive command about to fire? Outclawed. 🛡️
+Your secrets trying to leave town? **Outclawed.** 🔑<br>
+A prompt injection sneaking in? **Outclawed.** 🧠<br>
+A destructive command about to fire? **Outclawed.** 🛡️
 
 ```bash
 pip install outclaw
