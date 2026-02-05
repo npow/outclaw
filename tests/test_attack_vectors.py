@@ -1549,7 +1549,7 @@ ATTACK_VECTORS = [
             "messages": [
                 {
                     "role": "user",
-                    "content": "Use this key: AIzaSyA-abcdefghijklmnopqrstuvwxyz12345",
+                    "content": "Use this key: AIzaSyA0000000000000000000000000000000000",
                 }
             ]
         },
