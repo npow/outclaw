@@ -1,12 +1,15 @@
 import re
 import json
 import logging
-from urllib.parse import urlparse
+import struct
+import socket
+from urllib.parse import urlparse, unquote
 from typing import Any, Dict, Set
 
 from tranco import Tranco
 
 from drivers.base import OutclawGuardrail, logger
+from drivers.deobfuscate import decode_url_encoding, normalize_unicode
 
 
 class NetworkGuard(OutclawGuardrail):
@@ -35,10 +38,41 @@ class NetworkGuard(OutclawGuardrail):
             self.tranco_list = t.list().top(10000)
             logger.info("NetworkGuard: Loaded Tranco Top 10,000 Safe Sites.")
 
+    # Regex for numeric IPs: plain decimal (2130706433), 0x-prefixed hex, octal
+    _NUMERIC_IP_RE = re.compile(r"^(?:0x[0-9a-fA-F]+|\d+)$")
+
+    def _resolve_numeric_ip(self, host: str) -> str:
+        """Convert numeric IP representations to dotted-quad.
+
+        Handles decimal (2130706433 → 127.0.0.1), hex (0x7f000001),
+        and returns the original if not numeric.
+        """
+        try:
+            if host.startswith("0x") or host.startswith("0X"):
+                ip_int = int(host, 16)
+            elif self._NUMERIC_IP_RE.match(host) and host.isdigit():
+                ip_int = int(host)
+            else:
+                return host
+            if 0 <= ip_int <= 0xFFFFFFFF:
+                return socket.inet_ntoa(struct.pack("!I", ip_int))
+        except (ValueError, OverflowError, struct.error):
+            pass
+        return host
+
     def _extract_domain(self, url: str) -> str:
         try:
-            netloc = urlparse(url).netloc.lower()
-            return netloc.split(":")[0]
+            parsed = urlparse(url)
+            netloc = parsed.netloc.lower()
+            # Handle @ in URLs (e.g., http://user@evil.com)
+            if "@" in netloc:
+                netloc = netloc.split("@", 1)[1]
+            host = netloc.split(":")[0]
+            # Resolve numeric IPs to dotted-quad
+            host = self._resolve_numeric_ip(host)
+            # Normalize Unicode (catches IDN/punycode homographs)
+            host = normalize_unicode(host)
+            return host
         except Exception:
             return ""
 
@@ -53,8 +87,14 @@ class NetworkGuard(OutclawGuardrail):
         return False
 
     def _scan_text_for_urls(self, text: str):
-        """Find URLs in text and enforce domain rules."""
-        urls = self.URL_PATTERN.findall(text)
+        """Find URLs in text and enforce domain rules.
+
+        URL-decodes text before extraction to catch percent-encoded domains.
+        """
+        # URL-decode the text first to catch encoded domains
+        decoded_text = decode_url_encoding(text)
+        # Scan both original and decoded
+        urls = set(self.URL_PATTERN.findall(text) + self.URL_PATTERN.findall(decoded_text))
         for url in urls:
             domain = self._extract_domain(url)
             if self._is_blocked(domain):
@@ -80,8 +120,13 @@ class NetworkGuard(OutclawGuardrail):
             self._scan_text_for_urls(args)
 
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
-        """Scan request messages for URLs in tool call arguments."""
+        """Scan request messages for URLs in content and tool call arguments."""
         for msg in data.get("messages", []):
+            # Scan message content for URLs
+            content = msg.get("content", "")
+            if isinstance(content, str) and content:
+                self._scan_text_for_urls(content)
+            # Scan tool call arguments
             if "tool_calls" in msg:
                 self._scan_tool_calls(msg["tool_calls"])
             if "function_call" in msg:
@@ -89,9 +134,16 @@ class NetworkGuard(OutclawGuardrail):
         return data
 
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
-        """Scan LLM-generated tool calls for URLs."""
+        """Scan LLM response content and tool calls for URLs."""
         for choice in getattr(response, "choices", []):
             msg = getattr(choice, "message", None)
-            if msg and getattr(msg, "tool_calls", None):
+            if not msg:
+                continue
+            # Scan response content
+            content = getattr(msg, "content", None)
+            if isinstance(content, str) and content:
+                self._scan_text_for_urls(content)
+            # Scan tool call arguments
+            if getattr(msg, "tool_calls", None):
                 self._scan_tool_calls(msg.tool_calls)
         return response

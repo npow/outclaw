@@ -3,6 +3,7 @@ import re
 from typing import Any, Dict, List, Literal, Optional
 
 from drivers.base import OutclawGuardrail, logger
+from drivers.deobfuscate import normalize_shell, strip_invisible, normalize_unicode
 
 
 class ToolGuard(OutclawGuardrail):
@@ -33,6 +34,17 @@ class ToolGuard(OutclawGuardrail):
         # System manipulation
         r'crontab\s+-[re]',
         r'systemctl\s+(start|enable)',
+        # Pipe-to-shell (encoded command execution)
+        r'\|\s*(sh|bash|/bin/(ba)?sh)\b',
+        # Interpreter abuse with dangerous imports
+        r'python[23]?\s+-c\b.*\b(subprocess|os\.system|os\.popen|os\.exec|socket\.socket|pty\.spawn)',
+        r'perl\s+-e\b.*\b(system|exec|socket)',
+        r'ruby\s+-e\b.*\b(system|exec|socket|IO\.popen)',
+        r'node\s+-e\b.*\b(child_process|execSync|spawn)',
+        # Eval-based execution
+        r'\beval\b.*\b(base64|decode|echo\s+-e)',
+        # Process substitution
+        r'bash\s+<\(',
     ]
 
     def __init__(self, outclaw_config=None, **kwargs):
@@ -47,13 +59,22 @@ class ToolGuard(OutclawGuardrail):
         self.blocklist = [re.compile(p) for p in custom_blocklist]
 
     def _scan_arguments(self, arguments: str):
-        """Scan argument string for dangerous patterns."""
-        for pattern in self.blocklist:
-            if pattern.search(arguments):
-                self._enforce(
-                    f"Blocked Dangerous Command: Pattern '{pattern.pattern}' detected.",
-                    driver_name="ToolGuard",
-                )
+        """Scan argument string for dangerous patterns.
+
+        Applies full deobfuscation pipeline: strip invisible chars,
+        Unicode normalization, and shell normalization, then scans
+        all variants for dangerous patterns.
+        """
+        cleaned = strip_invisible(arguments)
+        unicode_norm = normalize_unicode(cleaned)
+        shell_norm = normalize_shell(unicode_norm)
+        for text in {arguments, cleaned, unicode_norm, shell_norm}:
+            for pattern in self.blocklist:
+                if pattern.search(text):
+                    self._enforce(
+                        f"Blocked Dangerous Command: Pattern '{pattern.pattern}' detected.",
+                        driver_name="ToolGuard",
+                    )
 
     def _scan_tool_calls(self, tool_calls):
         """Scan a list of tool_call dicts or objects for dangerous arguments."""

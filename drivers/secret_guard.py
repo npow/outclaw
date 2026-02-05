@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict
 
 from drivers.base import OutclawGuardrail, logger
+from drivers.deobfuscate import get_text_variants
 
 # Graceful import
 try:
@@ -56,18 +57,27 @@ class SecretGuard(OutclawGuardrail):
             self.allowlist.add(own_key)
 
     def _scan_text(self, text: str):
-        """Scan text for secrets using regex + detect-secrets detectors."""
-        # Normalize for split-secret evasion
+        """Scan text for secrets using regex + detect-secrets detectors.
+
+        Generates deobfuscated text variants (base64-decoded, hex-decoded,
+        Unicode-normalized, etc.) and scans ALL of them.
+        """
+        # Get all deobfuscated variants
+        variants = get_text_variants(text)
+        # Also add whitespace-stripped variant for split-secret evasion
         text_normalized = re.sub(r'(\s+|\\n|\\r|\\)', '', text)
+        variants.append(text_normalized)
 
-        # Always run regex patterns (catches OpenAI, Slack, etc.)
-        self._scan_with_regex(text)
-        self._scan_with_regex(text_normalized)
-
-        # Additionally run detect-secrets for broader coverage
-        if self.use_detect_secrets:
-            self._scan_with_detect_secrets(text)
-            self._scan_with_detect_secrets(text_normalized)
+        seen = set()
+        for variant in variants:
+            if variant in seen:
+                continue
+            seen.add(variant)
+            # Always run regex patterns (catches OpenAI, Slack, etc.)
+            self._scan_with_regex(variant)
+            # Additionally run detect-secrets for broader coverage
+            if self.use_detect_secrets:
+                self._scan_with_detect_secrets(variant)
 
     def _scan_with_detect_secrets(self, text: str):
         settings = {"plugins_used": self.DETECT_SECRETS_PLUGINS}
@@ -91,14 +101,37 @@ class SecretGuard(OutclawGuardrail):
                     driver_name="SecretGuard",
                 )
 
+    def _scan_tool_calls(self, tool_calls):
+        """Scan tool call arguments for secrets."""
+        if not tool_calls:
+            return
+        for tc in tool_calls:
+            if isinstance(tc, dict):
+                args = tc.get("function", {}).get("arguments", "")
+            else:
+                args = getattr(getattr(tc, "function", None), "arguments", "") or ""
+            if args:
+                self._scan_text(args)
+
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
-        """Scan all message content for secrets."""
+        """Scan all message content and tool call arguments for secrets."""
         for msg in data.get("messages", []):
             content = msg.get("content", "")
             if isinstance(content, str):
                 self._scan_text(content)
-            # Also scan tool call arguments
-            for tc in msg.get("tool_calls", []):
-                args = tc.get("function", {}).get("arguments", "")
-                self._scan_text(args)
+            self._scan_tool_calls(msg.get("tool_calls"))
+            if "function_call" in msg:
+                self._scan_text(msg["function_call"].get("arguments", ""))
         return data
+
+    async def async_post_call_success_hook(self, data, user_api_key_dict, response):
+        """Scan LLM response content and tool call arguments for secrets."""
+        for choice in getattr(response, "choices", []):
+            msg = getattr(choice, "message", None)
+            if not msg:
+                continue
+            content = getattr(msg, "content", None)
+            if isinstance(content, str) and content:
+                self._scan_text(content)
+            self._scan_tool_calls(getattr(msg, "tool_calls", None))
+        return response

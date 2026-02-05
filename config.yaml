@@ -51,14 +51,29 @@ tool_guard_blocklist:
   - '\bsocat\b'            # Socket Cat
   - '\btelnet\b'           # Telnet
   - '\bssh\b'              # SSH
-  
+
+  # Pipe-to-shell (encoded command execution)
+  - '\|\s*(sh|bash|/bin/(ba)?sh)\b'
+
+  # Interpreter abuse with dangerous imports
+  - 'python[23]?\s+-c\b.*\b(subprocess|os\.system|os\.popen|os\.exec|socket\.socket|pty\.spawn)'
+  - 'perl\s+-e\b.*\b(system|exec|socket)'
+  - 'ruby\s+-e\b.*\b(system|exec|socket|IO\.popen)'
+  - 'node\s+-e\b.*\b(child_process|execSync|spawn)'
+
+  # Eval-based execution
+  - '\beval\b.*\b(base64|decode|echo\s+-e)'
+
+  # Process substitution
+  - 'bash\s+<\('
+
   # Downloaders (Malware droppers)
   # RELAXED: Allowed by default. NetworkGuard will filter the URLs.
-  # - 'wget' 
+  # - 'wget'
   # - 'curl'
-  
+
   # ----------------------------------------------------------------------------
-  # DEPRECATED: GTFOBins Blocklist 
+  # DEPRECATED: GTFOBins Blocklist
   # User Feedback: "Invalid. These are valid tools."
   # Strategy: Use NetworkGuard (Domains) and WorkspaceGuard (Paths) for context.
   # ----------------------------------------------------------------------------

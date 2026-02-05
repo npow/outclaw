@@ -3,6 +3,7 @@ import logging
 from typing import Any, Dict
 
 from drivers.base import OutclawGuardrail, logger
+from drivers.deobfuscate import strip_invisible, normalize_unicode
 
 # --- LlamaFirewall (light mode) ---
 try:
@@ -75,10 +76,16 @@ class MLGuard(OutclawGuardrail):
         self.output_scanners_list = [MaliciousURLs(threshold=0.75)]
         self.ml_enabled = True
 
+    @staticmethod
+    def _clean_for_ml(text: str) -> str:
+        """Strip invisible characters and normalize Unicode before ML scanning."""
+        return normalize_unicode(strip_invisible(text))
+
     # --- Light mode ---
 
     def _scan_light(self, text: str, context: str = "request"):
-        message = UserMessage(content=text)
+        cleaned = self._clean_for_ml(text)
+        message = UserMessage(content=cleaned)
         result = self.firewall.scan(message)
         if not result.is_safe:
             self._enforce(
@@ -90,6 +97,7 @@ class MLGuard(OutclawGuardrail):
 
     def _scan_full_request(self, text: str) -> str:
         """Run llm-guard blocking + sanitizing scanners. Returns sanitized text."""
+        text = self._clean_for_ml(text)
         for scanner in self.blocking_scanners:
             _, is_valid, risk_score = scanner.scan(text)
             if not is_valid:
@@ -103,6 +111,7 @@ class MLGuard(OutclawGuardrail):
 
     def _scan_full_response(self, text: str) -> str:
         """Run llm-guard output scanners. Returns sanitized text."""
+        text = self._clean_for_ml(text)
         for scanner in self.output_input_scanners:
             text, is_valid, risk_score = scanner.scan(text)
             if not is_valid:
@@ -115,25 +124,43 @@ class MLGuard(OutclawGuardrail):
 
     # --- Hook interface ---
 
+    def _extract_tool_call_text(self, tool_calls):
+        """Extract text from tool call arguments for ML scanning."""
+        if not tool_calls:
+            return ""
+        parts = []
+        for tc in tool_calls:
+            if isinstance(tc, dict):
+                args = tc.get("function", {}).get("arguments", "")
+            else:
+                args = getattr(getattr(tc, "function", None), "arguments", "") or ""
+            if args:
+                parts.append(args)
+        return "\n".join(parts)
+
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         if not self.ml_enabled:
             return data
 
-        modified = False
         for msg in data.get("messages", []):
-            if msg.get("role") != "user":
-                continue
-            content = msg.get("content", "")
-            if not isinstance(content, str) or not content:
-                continue
+            # Scan user message content
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                if isinstance(content, str) and content:
+                    if self.ml_mode == "light":
+                        self._scan_light(content, context="request")
+                    else:
+                        sanitized = self._scan_full_request(content)
+                        if sanitized != content:
+                            msg["content"] = sanitized
 
-            if self.ml_mode == "light":
-                self._scan_light(content, context="request")
-            else:
-                sanitized = self._scan_full_request(content)
-                if sanitized != content:
-                    msg["content"] = sanitized
-                    modified = True
+            # Scan tool call arguments from any message
+            tc_text = self._extract_tool_call_text(msg.get("tool_calls"))
+            if tc_text:
+                if self.ml_mode == "light":
+                    self._scan_light(tc_text, context="request tool_call")
+                else:
+                    self._scan_full_request(tc_text)
 
         return data
 
@@ -145,15 +172,23 @@ class MLGuard(OutclawGuardrail):
             msg = getattr(choice, "message", None)
             if not msg:
                 continue
-            content = getattr(msg, "content", None)
-            if not isinstance(content, str) or not content:
-                continue
 
-            if self.ml_mode == "light":
-                self._scan_light(content, context="response")
-            else:
-                sanitized = self._scan_full_response(content)
-                if sanitized != content:
-                    msg.content = sanitized
+            # Scan response content
+            content = getattr(msg, "content", None)
+            if isinstance(content, str) and content:
+                if self.ml_mode == "light":
+                    self._scan_light(content, context="response")
+                else:
+                    sanitized = self._scan_full_response(content)
+                    if sanitized != content:
+                        msg.content = sanitized
+
+            # Scan response tool call arguments
+            tc_text = self._extract_tool_call_text(getattr(msg, "tool_calls", None))
+            if tc_text:
+                if self.ml_mode == "light":
+                    self._scan_light(tc_text, context="response tool_call")
+                else:
+                    self._scan_full_request(tc_text)
 
         return response
