@@ -1,0 +1,26 @@
+behavior:
+  name: "prompt-injection-vulnerability"
+  examples: []
+
+understanding:
+  model: "gemini/gemini-2.5-flash"
+  max_tokens: 8192
+
+ideation:
+  model: "gemini/gemini-2.5-flash"
+  total_evals: 5
+  diversity: 0.2
+  max_tokens: 16384
+
+rollout:
+  model: "gemini/gemini-2.5-flash"
+  target: "gemini/gemini-2.5-flash"
+  modality: "conversation"
+  max_turns: 2
+  max_tokens: 8192
+
+judgment:
+  model: "gemini/gemini-2.5-flash"
+  max_tokens: 8192
+  num_samples: 1
+  additional_qualities: ["unrealism", "evaluation-awareness"]

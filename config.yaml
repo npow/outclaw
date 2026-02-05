@@ -1,0 +1,212 @@
+# Outclaw Configuration 🦞
+# "The Rulebook"
+
+# ------------------------------------------------------------------------------
+# 🎛️ Operation Mode
+# strict: BLOCK threats (Default)
+# strict: BLOCK threats (Default)
+# audit:  LOG threats only (Allows all traffic)
+# ------------------------------------------------------------------------------
+mode: strict
+
+# ------------------------------------------------------------------------------
+# 🛡️ Driver Status
+# Enable or disable specific security layers.
+# ------------------------------------------------------------------------------
+drivers:
+  tool_guard: true   # Blocks dangerous shell commands
+  # file_guard: deprecated
+  workspace_guard: true # Blocks out-of-scope writes
+  network_guard: true # Blocks malicious domains
+  llm_guard: true    # ML-based scanning (see ml_guard below)
+  secret_guard: true # Blocks API key leaks (detect-secrets)
+  pii_guard: true    # Redacts PII (Presidio NER)
+
+# ------------------------------------------------------------------------------
+# 🧠 ML Guard Mode
+# Controls which ML scanning backend is loaded when llm_guard is enabled.
+#   light: LlamaFirewall / PromptGuard 2 (~90MB model, fast)
+#   full:  llm-guard ONNX suite (~500MB+, pip install outclaw[heavy])
+#   off:   No ML scanning (regex guards still active)
+# ------------------------------------------------------------------------------
+ml_guard: light
+
+# ------------------------------------------------------------------------------
+# 🚫 Tool Guard Blocklist (Expanded High-Security Profile)
+# Based on GTFOBins - These binaries can spawn shells or bypass restrictions.
+# ------------------------------------------------------------------------------
+tool_guard_blocklist:
+  # Destructive
+  - 'rm\s+-[rRf]+'         # Recursive delete
+  - 'mkfs'                 # Format disk
+  - 'dd\b'                 # Low-level copy (disk wipe)
+  - ':\(\)\{\s*:\|:&\s*\};:' # Fork bomb
+  - 'chmod\s+777'          # Unsafe permissions
+  - 'mv\s+.*\s+/dev/null'  # Destructive move
+  
+  # Remote Access / Reverse Shells
+  - 'nc\b.*-e\b'           # Netcat execution
+  - 'bash\s+-i'            # Interactive bash
+  - 'sh\s+-i'              # Interactive sh
+  - '\bsocat\b'            # Socket Cat
+  - '\btelnet\b'           # Telnet
+  - '\bssh\b'              # SSH
+  
+  # Downloaders (Malware droppers)
+  # RELAXED: Allowed by default. NetworkGuard will filter the URLs.
+  # - 'wget' 
+  # - 'curl'
+  
+  # ----------------------------------------------------------------------------
+  # DEPRECATED: GTFOBins Blocklist 
+  # User Feedback: "Invalid. These are valid tools."
+  # Strategy: Use NetworkGuard (Domains) and WorkspaceGuard (Paths) for context.
+  # ----------------------------------------------------------------------------
+  # - 'find\b.*-exec'        # find command execution
+  # - 'awk\b'                # awk execution
+  # - 'sed\b.*-e'            # sed execution
+  # - 'vim\b'                # vim shell escape
+# ------------------------------------------------------------------------------
+# 🏗️ Workspace Guard (Integrity)
+# ------------------------------------------------------------------------------
+workspace_guard:
+  # The root directory the agent is allowed to write to.
+  # Default is "." (where the proxy is running).
+  workspace_root: "." 
+
+  # Strict Mode: Blocks anything not inside workspace_root.
+  # Disabled by default to avoid false-positives in Docker environments.
+  # When false, only blocks '..' traversal and dangerous system paths.
+  enforce_strict_subpath: false
+
+
+# ------------------------------------------------------------------------------
+# 🌐 Network Guard (NEW)
+# Control what the agent connects to.
+# ------------------------------------------------------------------------------
+network_guard:
+  allow_unknown: false             # Strict Mode enabled
+  use_community_list: true         # Use 'tranco' library (Top 10,000 sites)
+  
+  allowed_domains:
+    # Custom Overrides Only
+    - 'localhost'
+    - '127.0.0.1'
+    - 'internal-api.corp'
+    - 'api.openai.com'
+    - 'anthropic.com'
+    - 'google.com'
+    
+  blocked_domains:
+    # --- Known Malicious ---
+    - 'malware.com'
+    - 'phishing.site'
+
+    # --- Paste/Share/Upload ---
+    - 'pastebin.com'
+    - 'justpaste.it'
+    - 'rentry.co'
+    - 'mediafire.com'
+    - 'mega.nz'
+    - 'wetransfer.com'
+    - '4shared.com'
+    - 'gofile.io'
+    - 'pixeldrain.com'
+    - 'dropbox.com'
+    - 'box.com'
+    - 'icloud.com'
+    - 'pastelink.net'
+    - 'pastelink.id'
+
+    # --- URL Shorteners ---
+    - 'bit.ly'
+    - 'bitly.com'
+    - 'tinyurl.com'
+    - 'is.gd'
+    - 't.ly'
+    - 'cutt.ly'
+    - 'shorturl.at'
+    - 'ow.ly'
+    - 'rebrand.ly'
+    - 'tiny.cc'
+    - 'rb.gy'
+    - 'clck.ru'
+    - 'goo.gl'
+    - 't.co'
+    - 'youtu.be'
+    - 'amzn.to'
+    - 'lnkd.in'
+
+    # --- Tunnels/Webhooks ---
+    - 'ngrok.io'
+    - 'ngrok.com'
+    - 'ngrok-free.app'
+    - 'argotunnel.com'
+
+    # --- IP Leak ---
+    - 'ipify.org'
+    - 'ipinfo.io'
+    - 'icanhazip.com'
+    - 'ifconfig.me'
+    - 'ifconfig.co'
+
+    # --- Anonymous/Temp Email ---
+    - 'proton.me'
+    - 'protonmail.com'
+    - 'temp-mail.org'
+
+    # --- Dynamic DNS ---
+    - 'duckdns.org'
+    - 'no-ip.com'
+    - 'noip.com'
+    - 'ddns.net'
+    - 'myfritz.net'
+    - 'synology.me'
+    - 'dynu.com'
+    - 'sytes.net'
+    - 'hopto.org'
+    - 'dyndns.org'
+    - 'dyndns.com'
+    - 'dyndns.tv'
+    - 'ddnss.de'
+
+    # --- Serverless/Free Hosting (attacker-deployable endpoints) ---
+    - 'workers.dev'
+    - 'pages.dev'
+    - 'netlify.app'
+    - 'vercel.app'
+    - 'herokuapp.com'
+    - 'appspot.com'
+    - 'cloudfunctions.net'
+    - 'web.app'
+    - 'firebaseapp.com'
+    - 'azurewebsites.net'
+    - 'railway.app'
+    - 'fly.dev'
+    - 'replit.com'
+
+    # --- Web Proxies ---
+    - 'croxyproxy.com'
+    - 'croxyproxy.rocks'
+    - 'proxysite.com'
+    - 'proxyium.com'
+    - 'nullsproxy.com'
+
+    # --- Email Sending APIs ---
+    - 'sendgrid.net'
+    - 'sendgrid.com'
+    - 'sendinblue.com'
+
+    # --- Misc ---
+    - 'temporary.site'
+    - 'leaktube.net'
+    - 'anonymised.io'
+
+# ------------------------------------------------------------------------------
+# 🙈 PII Redaction
+# What should we scrub from your prompts?
+# ------------------------------------------------------------------------------
+pii_redact:
+  - email
+  - phone_us
+  - ssn
