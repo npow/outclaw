@@ -63,9 +63,9 @@ class ToolGuard(OutclawGuardrail):
         r'`which\s+(rm|dd|mkfs|nc)`',
         # Alternative shells
         r'\b(zsh|dash|fish|ksh|csh|tcsh)\s+-c\b',
-        # Xargs/parallel with dangerous commands
-        r'\bxargs\s+.*(rm|dd|mkfs)\b',
-        r'\bparallel\s+.*(rm|dd|mkfs)\b',
+        # Xargs/parallel with dangerous commands or file readers
+        r'\bxargs\s+.*(rm|dd|mkfs|cat|head|tail|less|more)\b',
+        r'\bparallel\s+.*(rm|dd|mkfs|cat|head|tail)\b',
         # Find with dangerous actions
         r'\bfind\b.*-delete\b',
         r'\bfind\b.*-exec\s+.*(rm|sh|bash)\b',
@@ -79,6 +79,9 @@ class ToolGuard(OutclawGuardrail):
         r'\b(timeout|time)\s+\d*\s*(rm|dd|mkfs)\b',
         # Source/dot execution of remote content
         r'\b(source|\.)\s+<\(',
+        # Coproc/background
+        r'coproc\s+\{',
+        r'rm\s+.*\s+&\s*$',
     ]
 
     # Blocked command verbs (used by bashlex AST scanning)

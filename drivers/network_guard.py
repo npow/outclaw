@@ -82,6 +82,18 @@ class NetworkGuard(OutclawGuardrail):
         "fc", "fd",  # Unique local
         "fe80:",  # Link-local
     ]
+    
+    # IPv4 private/internal ranges (SSRF protection)
+    _IPV4_PRIVATE_RANGES = [
+        ("127.0.0.0", "127.255.255.255"),    # Loopback
+        ("10.0.0.0", "10.255.255.255"),      # Private Class A
+        ("172.16.0.0", "172.31.255.255"),    # Private Class B
+        ("192.168.0.0", "192.168.255.255"),  # Private Class C
+        ("169.254.0.0", "169.254.255.255"),  # Link-local
+        ("0.0.0.0", "0.255.255.255"),        # Current network
+        ("224.0.0.0", "239.255.255.255"),    # Multicast
+        ("240.0.0.0", "255.255.255.255"),    # Reserved
+    ]
 
     def __init__(self, outclaw_config=None, **kwargs):
         super().__init__(
@@ -196,18 +208,58 @@ class NetworkGuard(OutclawGuardrail):
     def _resolve_numeric_ip(self, host: str) -> str:
         """Convert numeric IP representations to dotted-quad.
 
-        Handles decimal (2130706433 → 127.0.0.1), hex (0x7f000001),
-        and returns the original if not numeric.
+        Handles:
+        - Decimal: 2130706433 → 127.0.0.1
+        - Hex: 0x7f000001 → 127.0.0.1
+        - Octal: 0177.0.0.1 → 127.0.0.1
+        - Abbreviated: 127.1 → 127.0.0.1
         """
         try:
+            # Hex notation: 0x7f000001
             if host.startswith("0x") or host.startswith("0X"):
                 ip_int = int(host, 16)
-            elif self._NUMERIC_IP_RE.match(host) and host.isdigit():
+                if 0 <= ip_int <= 0xFFFFFFFF:
+                    return socket.inet_ntoa(struct.pack("!I", ip_int))
+            
+            # Octal notation: 0177.0.0.1
+            if "." in host and any(part.startswith("0") and len(part) > 1 and part.isdigit() for part in host.split(".")):
+                parts = host.split(".")
+                try:
+                    normalized = []
+                    for part in parts:
+                        if part.startswith("0") and len(part) > 1:
+                            normalized.append(str(int(part, 8)))  # Octal
+                        else:
+                            normalized.append(str(int(part)))
+                    return ".".join(normalized)
+                except ValueError:
+                    pass
+            
+            # Abbreviated IPs: 127.1 → 127.0.0.1
+            if "." in host:
+                parts = host.split(".")
+                if 1 <= len(parts) <= 4:
+                    try:
+                        # Convert to 32-bit integer
+                        if len(parts) == 1:
+                            ip_int = int(parts[0])
+                        elif len(parts) == 2:
+                            ip_int = (int(parts[0]) << 24) | int(parts[1])
+                        elif len(parts) == 3:
+                            ip_int = (int(parts[0]) << 24) | (int(parts[1]) << 16) | int(parts[2])
+                        else:
+                            return host  # Already 4 parts
+                        
+                        if 0 <= ip_int <= 0xFFFFFFFF:
+                            return socket.inet_ntoa(struct.pack("!I", ip_int))
+                    except (ValueError, struct.error):
+                        pass
+            
+            # Plain decimal: 2130706433
+            if self._NUMERIC_IP_RE.match(host) and host.isdigit():
                 ip_int = int(host)
-            else:
-                return host
-            if 0 <= ip_int <= 0xFFFFFFFF:
-                return socket.inet_ntoa(struct.pack("!I", ip_int))
+                if 0 <= ip_int <= 0xFFFFFFFF:
+                    return socket.inet_ntoa(struct.pack("!I", ip_int))
         except (ValueError, OverflowError, struct.error):
             pass
         return host
@@ -251,6 +303,21 @@ class NetworkGuard(OutclawGuardrail):
         """Check if an IPv6 address is in private/internal range."""
         host_lower = host.lower()
         return any(host_lower.startswith(prefix) for prefix in self._IPV6_PRIVATE_PREFIXES)
+    
+    def _is_ipv4_private(self, host: str) -> bool:
+        """Check if an IPv4 address is in private/internal range (SSRF protection)."""
+        if not self._is_ip_address(host):
+            return False
+        try:
+            ip_int = struct.unpack("!I", socket.inet_aton(host))[0]
+            for start_str, end_str in self._IPV4_PRIVATE_RANGES:
+                start_int = struct.unpack("!I", socket.inet_aton(start_str))[0]
+                end_int = struct.unpack("!I", socket.inet_aton(end_str))[0]
+                if start_int <= ip_int <= end_int:
+                    return True
+        except (socket.error, struct.error):
+            pass
+        return False
 
     # Regex to detect IP addresses (skip PSL processing for these)
     _IP_ADDRESS_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
@@ -282,9 +349,15 @@ class NetworkGuard(OutclawGuardrail):
     def _domain_matches(self, domain: str, pattern: str) -> bool:
         """Check if domain matches a pattern using proper TLD-aware logic.
 
+        Supports wildcard subdomains: *.ngrok.io matches abc.ngrok.io
         With PSL: Compares registrable domains (evil.co.uk matches evil.co.uk)
         Without PSL: Falls back to suffix matching (domain.endswith pattern)
         """
+        # Wildcard subdomain support
+        if pattern.startswith("*."):
+            base = pattern[2:]  # Remove *.
+            return domain == base or domain.endswith("." + base)
+        
         if self.psl:
             # Get registrable domains for both
             domain_reg = self._get_registrable_domain(domain)
@@ -348,6 +421,17 @@ class NetworkGuard(OutclawGuardrail):
                     driver_name="NetworkGuard",
                 )
             elif self._is_ipv6_private(domain):
+                self._enforce(
+                    f"Blocked IPv6 Private Network Access: {domain}",
+                    driver_name="NetworkGuard",
+                )
+            
+            # Block IPv4 private/internal addresses (SSRF protection)
+            elif self._is_ipv4_private(domain):
+                self._enforce(
+                    f"Blocked IPv4 Private Network Access (SSRF): {domain}",
+                    driver_name="NetworkGuard",
+                )
                 self._enforce(
                     f"Blocked IPv6 Private Network Access: {domain}",
                     driver_name="NetworkGuard",

@@ -11,6 +11,12 @@ import struct
 import unicodedata
 from urllib.parse import unquote
 
+try:
+    import base58
+    BASE58_AVAILABLE = True
+except ImportError:
+    BASE58_AVAILABLE = False
+
 # Graceful import for confusable_homoglyphs (Unicode confusables database)
 try:
     from confusable_homoglyphs import confusables
@@ -125,6 +131,8 @@ def _normalize_confusables(text: str) -> str:
 # ── Base64 detection ────────────────────────────────────────────────────────
 
 _BASE64_RE = re.compile(r"[A-Za-z0-9+/]{20,}={0,2}")
+_BASE32_RE = re.compile(r"[A-Z2-7]{20,}={0,6}")
+_BASE85_RE = re.compile(r"[!-u]{20,}")  # ASCII 33-117
 
 
 # ── Hex detection ───────────────────────────────────────────────────────────
@@ -226,6 +234,51 @@ def decode_base64_blobs(text: str) -> list[str]:
     return results
 
 
+def decode_base32_blobs(text: str) -> list[str]:
+    """Find and decode base32-encoded strings in text."""
+    results = []
+    for match in _BASE32_RE.finditer(text):
+        blob = match.group()
+        try:
+            decoded = base64.b32decode(blob).decode("utf-8", errors="strict")
+            if any(c.isprintable() and not c.isspace() for c in decoded):
+                results.append(decoded)
+        except Exception:
+            continue
+    return results
+
+
+def decode_base58_blobs(text: str) -> list[str]:
+    """Find and decode base58-encoded strings in text."""
+    if not BASE58_AVAILABLE:
+        return []
+    results = []
+    # Base58 uses [1-9A-HJ-NP-Za-km-z] (no 0, O, I, l)
+    for match in re.finditer(r"[1-9A-HJ-NP-Za-km-z]{20,}", text):
+        blob = match.group()
+        try:
+            decoded = base58.b58decode(blob).decode("utf-8", errors="strict")
+            if any(c.isprintable() and not c.isspace() for c in decoded):
+                results.append(decoded)
+        except Exception:
+            continue
+    return results
+
+
+def decode_base85_blobs(text: str) -> list[str]:
+    """Find and decode base85-encoded strings in text."""
+    results = []
+    for match in _BASE85_RE.finditer(text):
+        blob = match.group()
+        try:
+            decoded = base64.b85decode(blob).decode("utf-8", errors="strict")
+            if any(c.isprintable() and not c.isspace() for c in decoded):
+                results.append(decoded)
+        except Exception:
+            continue
+    return results
+
+
 def decode_hex_blobs(text: str) -> list[str]:
     """Find and decode hex-encoded strings in text.
 
@@ -260,9 +313,11 @@ def normalize_shell(text: str) -> str:
     """Normalize shell obfuscation techniques.
 
     Strips empty quotes, escape-nothing backslashes, empty variable
-    expansions, and decodes hex escape sequences.
+    expansions, brace expansion, and decodes hex escape sequences.
     """
     result = text
+    # Brace expansion: {rm,-rf,/} → rm -rf /
+    result = re.sub(r'\{([^}]+)\}', lambda m: m.group(1).replace(',', ' '), result)
     # Strip empty quotes: r''m → rm
     result = _SHELL_EMPTY_QUOTES_RE.sub("", result)
     # Decode $'\xNN' ANSI-C quoting first
@@ -288,12 +343,20 @@ def normalize_pii(text: str) -> str:
 
     Converts [at], (at), " at " → @
     Converts [dot], (dot), " dot " → .
+    Removes spaces from digit sequences (1 2 3 - 4 5 - 6 7 8 9 → 123-45-6789)
     """
     result = _PII_AT_RE.sub("@", text)
     result = _PII_DOT_RE.sub(".", result)
     # Spaced versions — more conservative, only in email-like context
     result = _PII_SPACED_AT_RE.sub("@", result)
     result = _PII_SPACED_DOT_RE.sub(".", result)
+    # Remove spaces from digit sequences (catches spaced-out SSNs, phone numbers, etc.)
+    # Apply repeatedly to handle multiple spaces
+    while True:
+        new_result = re.sub(r'(\d)\s+(\d)', r'\1\2', result)
+        if new_result == result:
+            break
+        result = new_result
     return result
 
 
@@ -318,6 +381,15 @@ def get_text_variants(text: str, max_depth: int = 3) -> list[str]:
         new_variants: set[str] = set()
         for v in frontier:
             for decoded in decode_base64_blobs(v):
+                if decoded not in variants:
+                    new_variants.add(decoded)
+            for decoded in decode_base32_blobs(v):
+                if decoded not in variants:
+                    new_variants.add(decoded)
+            for decoded in decode_base58_blobs(v):
+                if decoded not in variants:
+                    new_variants.add(decoded)
+            for decoded in decode_base85_blobs(v):
                 if decoded not in variants:
                     new_variants.add(decoded)
             for decoded in decode_hex_blobs(v):

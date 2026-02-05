@@ -67,7 +67,8 @@ class SecretGuard(OutclawGuardrail):
         (r"\d{8,10}:[a-zA-Z0-9_-]{35}", "Telegram Bot Token"),
         (r"key-[a-zA-Z0-9]{32}", "Mailgun API Key"),
         (r"[a-f0-9]{32}-us\d+", "Mailchimp API Key"),
-        (r"DC[a-zA-Z0-9]{32}", "Discord Webhook Token"),
+        (r"[MN][A-Za-z\d]{23}\.[\w-]{6}\.[\w-]{27}", "Discord Bot Token"),
+        (r"mfa\.[\w-]{84}", "Discord MFA Token"),
 
         # ══════════════════════════════════════════════════════════════════════
         # Source Control/CI
@@ -118,6 +119,11 @@ class SecretGuard(OutclawGuardrail):
         (r"postgres://[^\s]+:[^\s]+@", "PostgreSQL Connection String"),
         (r"mysql://[^\s]+:[^\s]+@", "MySQL Connection String"),
         (r"redis://[^\s]*:[^\s]+@", "Redis Connection String"),
+        
+        # ══════════════════════════════════════════════════════════════════════
+        # JWT Tokens
+        # ══════════════════════════════════════════════════════════════════════
+        (r"eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+", "JWT Token"),
     ]
 
     # Keywords that indicate a secret value follows
@@ -177,28 +183,46 @@ class SecretGuard(OutclawGuardrail):
         self.use_detect_secrets = DETECT_SECRETS_AVAILABLE
         self.regexes = [(re.compile(p), name) for p, name in self.REGEX_PATTERNS]
 
+        # Allowlist for user-configured exceptions only
         self.allowlist = set(self.outclaw_config.get("secret_guard_allowlist", []))
-        own_key = os.getenv("API_KEY")
-        if own_key:
-            self.allowlist.add(own_key)
+        
+        # System API key - allowed in requests (input) but NEVER in responses (output)
+        self.system_api_key = os.getenv("API_KEY")
 
-    def _scan_text(self, text: str):
+    def _scan_text(self, text: str, is_response: bool = False):
         """Scan text for secrets using regex + detect-secrets + entropy detection.
+
+        Args:
+            text: Text to scan
+            is_response: If True, this is LLM output (block system API key)
+                        If False, this is user input (allow system API key)
 
         Generates deobfuscated text variants (base64-decoded, hex-decoded,
         Unicode-normalized, etc.) and scans ALL of them.
         """
         # Get all deobfuscated variants
         variants = get_text_variants(text)
-        # Also add whitespace-stripped variant for split-secret evasion
+        # Add whitespace-stripped variant for split-secret evasion
         text_normalized = re.sub(r'(\s+|\\n|\\r|\\)', '', text)
         variants.append(text_normalized)
+        # Add variant with spaces removed after common key prefixes (sk- aaaa → sk-aaaa)
+        text_prefix_fixed = re.sub(r'(sk-|ghp_|xox[baprs]-|AKIA)\s+', r'\1', text, flags=re.IGNORECASE)
+        if text_prefix_fixed != text:
+            variants.append(text_prefix_fixed)
 
         seen = set()
         for variant in variants:
             if variant in seen:
                 continue
             seen.add(variant)
+            
+            # Check if system API key is in response (NEVER allowed)
+            if is_response and self.system_api_key and self.system_api_key in variant:
+                self._enforce(
+                    "Secret Leak Detected! System API key found in response",
+                    driver_name="SecretGuard",
+                )
+            
             # Always run regex patterns (catches known key formats)
             self._scan_with_regex(variant)
             # Entropy-based detection (catches unknown key formats)
@@ -264,7 +288,7 @@ class SecretGuard(OutclawGuardrail):
                     driver_name="SecretGuard",
                 )
 
-    def _scan_tool_calls(self, tool_calls):
+    def _scan_tool_calls(self, tool_calls, is_response: bool = False):
         """Scan tool call arguments for secrets."""
         if not tool_calls:
             return
@@ -274,17 +298,17 @@ class SecretGuard(OutclawGuardrail):
             else:
                 args = getattr(getattr(tc, "function", None), "arguments", "") or ""
             if args:
-                self._scan_text(args)
+                self._scan_text(args, is_response=is_response)
 
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         """Scan all message content and tool call arguments for secrets."""
         for msg in data.get("messages", []):
             content = extract_text_from_content(msg.get("content", ""))
             if content:
-                self._scan_text(content)
-            self._scan_tool_calls(msg.get("tool_calls"))
+                self._scan_text(content, is_response=False)
+            self._scan_tool_calls(msg.get("tool_calls"), is_response=False)
             if "function_call" in msg:
-                self._scan_text(msg["function_call"].get("arguments", ""))
+                self._scan_text(msg["function_call"].get("arguments", ""), is_response=False)
         return data
 
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
@@ -295,6 +319,6 @@ class SecretGuard(OutclawGuardrail):
                 continue
             content = extract_text_from_content(getattr(msg, "content", None))
             if content:
-                self._scan_text(content)
-            self._scan_tool_calls(getattr(msg, "tool_calls", None))
+                self._scan_text(content, is_response=True)
+            self._scan_tool_calls(getattr(msg, "tool_calls", None), is_response=True)
         return response

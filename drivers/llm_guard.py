@@ -37,8 +37,15 @@ class MLGuard(OutclawGuardrail):
             guardrail_name="outclaw-ml",
             **kwargs,
         )
+        ml_config = self.outclaw_config.get("ml_guard_config", {})
         self.ml_mode = self.outclaw_config.get("ml_guard", "light")
         self.ml_enabled = False
+        
+        # Configurable thresholds
+        self.prompt_injection_threshold = ml_config.get("prompt_injection_threshold", 0.5)
+        self.toxicity_threshold = ml_config.get("toxicity_threshold", 0.5)
+        self.malicious_url_threshold = ml_config.get("malicious_url_threshold", 0.75)
+        self.ban_code_threshold = ml_config.get("ban_code_threshold", 0.5)
 
         if self.ml_mode == "off":
             logger.info("ML Guard disabled by config (ml_guard: off)")
@@ -71,9 +78,13 @@ class MLGuard(OutclawGuardrail):
         logger.info("Initializing llm-guard full ONNX suite...")
         self.vault = Vault()
         self.sanitizing_scanners = [Anonymize(vault=self.vault), Secrets(redact_mode="REDACT")]
-        self.blocking_scanners = [PromptInjection(), Toxicity(), BanCode(use_onnx=True, threshold=0.5)]
+        self.blocking_scanners = [
+            PromptInjection(threshold=self.prompt_injection_threshold), 
+            Toxicity(threshold=self.toxicity_threshold), 
+            BanCode(use_onnx=True, threshold=self.ban_code_threshold)
+        ]
         self.output_input_scanners = [Secrets(redact_mode="REDACT"), Anonymize(vault=self.vault)]
-        self.output_scanners_list = [MaliciousURLs(threshold=0.75)]
+        self.output_scanners_list = [MaliciousURLs(threshold=self.malicious_url_threshold)]
         self.ml_enabled = True
 
     @staticmethod

@@ -56,6 +56,8 @@ class PIIGuard(OutclawGuardrail):
             guardrail_name="outclaw-pii",
             **kwargs,
         )
+        pii_config = self.outclaw_config.get("pii_guard_config", {})
+        self.languages = pii_config.get("languages", ["en"])  # Configurable languages
         self.use_presidio = PRESIDIO_AVAILABLE
         self.use_phonenumbers = PHONENUMBERS_AVAILABLE
 
@@ -63,14 +65,15 @@ class PIIGuard(OutclawGuardrail):
             try:
                 self.analyzer = AnalyzerEngine()
                 self.anonymizer = AnonymizerEngine()
+                logger.info(f"PII Guard initialized for languages: {', '.join(self.languages)}")
             except (Exception, SystemExit):
                 logger.warning("Presidio NLP model unavailable, falling back to regex PII patterns")
                 self.use_presidio = False
 
         if self.use_presidio:
-            pii_config = self.outclaw_config.get("pii_redact", [])
-            if pii_config:
-                mapped = [self.CONFIG_TO_PRESIDIO.get(item) for item in pii_config]
+            pii_redact_config = self.outclaw_config.get("pii_redact", [])
+            if pii_redact_config:
+                mapped = [self.CONFIG_TO_PRESIDIO.get(item) for item in pii_redact_config]
                 self.entities = list(set([m for m in mapped if m] + self.DEFAULT_ENTITIES))
             else:
                 self.entities = self.DEFAULT_ENTITIES
@@ -82,7 +85,7 @@ class PIIGuard(OutclawGuardrail):
             logger.info("PIIGuard: phonenumbers library loaded for international phone detection")
 
     def _redact_presidio(self, text: str) -> str:
-        results = self.analyzer.analyze(text=text, entities=self.entities, language="en")
+        results = self.analyzer.analyze(text=text, entities=self.entities, language=self.languages[0])
         if not results:
             return text
         return self.anonymizer.anonymize(text=text, analyzer_results=results).text

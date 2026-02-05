@@ -31,6 +31,24 @@ drivers:
 ml_guard: light
 
 # ------------------------------------------------------------------------------
+# 🎚️ ML Guard Configuration (optional)
+# Tune ML model sensitivity thresholds (0.0 = permissive, 1.0 = strict)
+# ------------------------------------------------------------------------------
+ml_guard_config:
+  prompt_injection_threshold: 0.5    # Prompt injection detection sensitivity
+  toxicity_threshold: 0.5            # Toxic content detection sensitivity
+  malicious_url_threshold: 0.75      # Malicious URL detection sensitivity
+  ban_code_threshold: 0.5            # Code injection detection sensitivity
+
+# ------------------------------------------------------------------------------
+# 🙈 PII Guard Configuration (optional)
+# Configure language support and detection settings
+# ------------------------------------------------------------------------------
+pii_guard_config:
+  languages: ["en"]  # Supported: en, es, fr, de, it, pt, nl, etc.
+                     # Note: Non-English requires language-specific Presidio models
+
+# ------------------------------------------------------------------------------
 # 🚫 Tool Guard Blocklist (Expanded High-Security Profile)
 # Based on GTFOBins - These binaries can spawn shells or bypass restrictions.
 # ------------------------------------------------------------------------------

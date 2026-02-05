@@ -16,6 +16,8 @@ classifiers = [
 ]
 dependencies = [
     "litellm>=1.50.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
     "PyYAML>=6.0.1",
     "tranco>=0.8.0",
     "detect-secrets>=1.4.0",
@@ -26,6 +28,7 @@ dependencies = [
     "confusable_homoglyphs>=3.3.0",
     "publicsuffixlist>=1.0.0",
     "phonenumbers>=8.13.0",
+    "base58>=2.1.1",
 ]
 
 [project.urls]
