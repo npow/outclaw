@@ -163,7 +163,10 @@ class MLGuard(OutclawGuardrail):
                     else:
                         sanitized = self._scan_full_request(content)
                         if sanitized != content:
-                            msg["content"] = sanitized
+                            if self.is_audit_mode:
+                                logger.warning("🛡️ MLGuard: request content would be sanitized (audit mode, passthrough)")
+                            else:
+                                msg["content"] = sanitized
 
             # Scan tool call arguments from any message
             tc_text = self._extract_tool_call_text(msg.get("tool_calls"))
@@ -192,7 +195,10 @@ class MLGuard(OutclawGuardrail):
                 else:
                     sanitized = self._scan_full_response(content)
                     if sanitized != content:
-                        msg.content = sanitized
+                        if self.is_audit_mode:
+                            logger.warning("🛡️ MLGuard: response content would be sanitized (audit mode, passthrough)")
+                        else:
+                            msg.content = sanitized
 
             # Scan response tool call arguments
             tc_text = self._extract_tool_call_text(getattr(msg, "tool_calls", None))

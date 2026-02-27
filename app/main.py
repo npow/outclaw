@@ -18,6 +18,20 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 logger = logging.getLogger("outclaw")
 
 
+def _infer_litellm_model_prefix(upstream_base_url: str) -> str:
+    """Infer LiteLLM provider prefix from upstream base URL."""
+    url = (upstream_base_url or "").lower()
+    if "api.anthropic.com" in url:
+        return "anthropic/*"
+    if "generativelanguage.googleapis.com" in url or "googleapis.com" in url:
+        return "gemini/*"
+    if "api.groq.com" in url:
+        return "groq/*"
+    if "127.0.0.1:11434" in url or "localhost:11434" in url or "ollama" in url:
+        return "ollama/*"
+    return "openai/*"
+
+
 def register_guards(config: dict):
     """Instantiate enabled guards and register them as LiteLLM callbacks."""
     drivers = config.get("drivers", {})
@@ -61,13 +75,14 @@ def generate_litellm_config(outclaw_config: dict) -> dict:
     """Generate a LiteLLM proxy config dict from Outclaw settings."""
     upstream = os.getenv("UPSTREAM_BASE_URL", "https://api.openai.com/v1")
     api_key = os.getenv("API_KEY", "")
+    model_prefix = _infer_litellm_model_prefix(upstream)
 
     litellm_config = {
         "model_list": [
             {
                 "model_name": "*",
                 "litellm_params": {
-                    "model": "openai/*",
+                    "model": model_prefix,
                     "api_base": upstream,
                     "api_key": api_key or "sk-placeholder",
                 },
@@ -106,7 +121,7 @@ def run_proxy(host: str = "127.0.0.1", port: int = 8080, token: str | None = Non
     if outclaw_config.get("mode") == "audit":
         logger.warning("=" * 60)
         logger.warning("RUNNING IN AUDIT MODE - ZERO PROTECTION ACTIVE")
-        logger.warning("Dangerous commands will be LOGGED but NOT BLOCKED.")
+        logger.warning("Threats will be LOGGED but NOT BLOCKED or MUTATED.")
         logger.warning("=" * 60)
 
     register_guards(outclaw_config)

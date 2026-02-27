@@ -373,8 +373,20 @@ class NetworkGuard(OutclawGuardrail):
         if any(self._domain_matches(domain, d) for d in self.blocked_domains):
             return True
         # Check URLhaus threat feed
-        if self.urlhaus_domains and domain in self.urlhaus_domains:
+        if self.urlhaus_domains and self._matches_domain_set(domain, self.urlhaus_domains):
             return True
+        return False
+
+    @staticmethod
+    def _matches_domain_set(domain: str, domain_set: Set[str]) -> bool:
+        """Check exact domain and parent domains against a set."""
+        current = domain
+        while current:
+            if current in domain_set:
+                return True
+            if "." not in current:
+                break
+            current = current.split(".", 1)[1]
         return False
 
     def _is_allowed(self, domain: str) -> bool:
@@ -430,10 +442,6 @@ class NetworkGuard(OutclawGuardrail):
             elif self._is_ipv4_private(domain):
                 self._enforce(
                     f"Blocked IPv4 Private Network Access (SSRF): {domain}",
-                    driver_name="NetworkGuard",
-                )
-                self._enforce(
-                    f"Blocked IPv6 Private Network Access: {domain}",
                     driver_name="NetworkGuard",
                 )
             elif self._is_blocked(domain):

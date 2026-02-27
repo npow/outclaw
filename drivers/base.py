@@ -55,3 +55,8 @@ class OutclawGuardrail(CustomGuardrail):
                     }
                 },
             )
+
+    @property
+    def is_audit_mode(self) -> bool:
+        """Whether guard should run in observe-only mode."""
+        return self.mode == "audit"

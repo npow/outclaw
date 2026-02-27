@@ -7,7 +7,11 @@ PROVIDERS = {
     "openai": "https://api.openai.com/v1",
     "anthropic": "https://api.anthropic.com/v1",
     "google": "https://generativelanguage.googleapis.com/v1beta",
+    "groq": "https://api.groq.com/openai/v1",
+    "ollama": "http://127.0.0.1:11434/v1",
 }
+
+TOOL_GUARD_PROFILES = ["balanced", "strict", "paranoid"]
 
 DEFAULT_CONFIG = {
     "mode": "strict",
@@ -31,6 +35,7 @@ DEFAULT_CONFIG = {
         r"\btelnet\b",
         r"\bssh\b",
     ],
+    "tool_guard_profile": "balanced",
     "workspace_guard": {
         "workspace_root": ".",
         "enforce_strict_subpath": False,
@@ -87,7 +92,7 @@ def run_init() -> None:
 
     # 1. Provider
     provider_names = list(PROVIDERS.keys()) + ["custom"]
-    provider = _choose("Choose LLM provider [1-4]: ", provider_names)
+    provider = _choose(f"Choose LLM provider [1-{len(provider_names)}]: ", provider_names)
 
     if provider == "custom":
         upstream_url = input("Enter upstream base URL: ").strip()
@@ -106,9 +111,17 @@ def run_init() -> None:
     mode = _choose("Choose mode [1-2]: ", ["strict", "audit"])
     print()
 
-    # 4. Build config
+    # 4. ToolGuard profile
+    tool_guard_profile = _choose(
+        f"Choose ToolGuard profile [1-{len(TOOL_GUARD_PROFILES)}]: ",
+        TOOL_GUARD_PROFILES,
+    )
+    print()
+
+    # 5. Build config
     cfg = dict(DEFAULT_CONFIG)
     cfg["mode"] = mode
+    cfg["tool_guard_profile"] = tool_guard_profile
 
     # Write config.yaml
     config_path = "config.yaml"
@@ -132,4 +145,5 @@ def run_init() -> None:
     print(f"    Provider:  {provider}")
     print(f"    Upstream:  {upstream_url}")
     print(f"    Mode:      {mode}")
+    print(f"    ToolGuard: {tool_guard_profile}")
     print(f"    Drivers:   all enabled")

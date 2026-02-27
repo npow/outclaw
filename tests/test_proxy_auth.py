@@ -55,6 +55,34 @@ def test_wildcard_model_routing():
     assert config["model_list"][0]["litellm_params"]["model"] == "openai/*"
 
 
+def test_provider_model_routing_anthropic(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_BASE_URL", "https://api.anthropic.com/v1")
+    from app.main import generate_litellm_config
+    config = generate_litellm_config({})
+    assert config["model_list"][0]["litellm_params"]["model"] == "anthropic/*"
+
+
+def test_provider_model_routing_gemini(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
+    from app.main import generate_litellm_config
+    config = generate_litellm_config({})
+    assert config["model_list"][0]["litellm_params"]["model"] == "gemini/*"
+
+
+def test_provider_model_routing_groq(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_BASE_URL", "https://api.groq.com/openai/v1")
+    from app.main import generate_litellm_config
+    config = generate_litellm_config({})
+    assert config["model_list"][0]["litellm_params"]["model"] == "groq/*"
+
+
+def test_provider_model_routing_ollama(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_BASE_URL", "http://127.0.0.1:11434/v1")
+    from app.main import generate_litellm_config
+    config = generate_litellm_config({})
+    assert config["model_list"][0]["litellm_params"]["model"] == "ollama/*"
+
+
 def test_register_guards_creates_callbacks():
     """register_guards should add guards to litellm.callbacks."""
     import litellm

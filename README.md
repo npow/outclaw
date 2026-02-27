@@ -94,7 +94,7 @@ outclaw init    # creates config.yaml
 Key settings:
 
 ```yaml
-mode: strict    # strict (block) or audit (log only)
+mode: strict    # strict (block/redact) or audit (log only, no blocking/mutation)
 
 network_guard:
   allow_unknown: false          # block domains not in Tranco top 10K
@@ -102,6 +102,8 @@ network_guard:
 
 workspace_guard:
   enforce_strict_subpath: false # true = only allow writes inside workspace_root
+
+tool_guard_profile: balanced    # balanced, strict, paranoid
 
 ml_guard: light                 # light (PromptGuard 2) or full (llm-guard suite)
 ```
@@ -115,6 +117,7 @@ See [docs/configuration.md](docs/configuration.md) for the full rulebook.
 ## Learn more
 
 - 🔧 **[Configuration](docs/configuration.md)** — customize guards and tune protections
+- 🧾 **[Proxy Approval Spec](docs/proxy-approval-spec.md)** — non-interactive approval artifacts for high-risk actions
 - 🔒 **[Security](SECURITY.md)** — threat model, limitations, and hardening
 - ⚙️ **[Architecture](docs/how-it-works.md)** — how each guard works under the hood
 - 🗺️ **[Roadmap](docs/roadmap.md)** — what's coming next

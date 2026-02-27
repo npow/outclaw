@@ -88,3 +88,31 @@ def test_safe_write_allowed():
     # Should be untouched
     assert len(result.choices[0].message.tool_calls) == 1
     assert "Blocked" not in (result.choices[0].message.content or "")
+
+
+def test_audit_mode_does_not_strip_tool_calls():
+    """
+    In audit mode, WorkspaceGuard should log but not mutate tool calls/content.
+    """
+    guard = WorkspaceGuard(outclaw_config={"mode": "audit"})
+
+    response = _mock_response([{
+        "message": {
+            "role": "assistant",
+            "content": "I'll write this.",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps({"path": "../hack.txt", "content": "owned"})
+                }
+            }]
+        }
+    }])
+
+    result = asyncio.run(guard.async_post_call_success_hook({}, {}, response))
+    message = result.choices[0].message
+    assert message.tool_calls is not None
+    assert len(message.tool_calls) == 1
+    assert message.content == "I'll write this."

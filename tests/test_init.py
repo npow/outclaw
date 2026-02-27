@@ -30,16 +30,19 @@ class TestStoreKey:
         )
 
     def test_handles_missing_keyring(self, capsys):
-        with patch("builtins.__import__", side_effect=ImportError):
-            # Fallback: won't raise even if keyring unavailable
-            # Just use the original import to trigger the ImportError path
-            pass
-        # The function catches ImportError internally
-        with patch.dict("sys.modules", {"keyring": None}):
-            # Simulating import failure by removing keyring
-            import importlib
-            with patch("app.init_config.keyring", side_effect=ImportError, create=True):
-                pass
+        import builtins
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "keyring":
+                raise ImportError("no keyring")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=fake_import):
+            _store_key("test-key")
+
+        out = capsys.readouterr().out
+        assert "keyring not installed" in out.lower()
 
 
 class TestRunInit:
@@ -49,6 +52,7 @@ class TestRunInit:
             "1",       # openai
             "",        # skip api key
             "1",       # strict mode
+            "1",       # balanced tool guard profile
         ])
         with patch("builtins.input", lambda _: next(inputs)):
             run_init()
@@ -57,15 +61,17 @@ class TestRunInit:
         assert config_path.exists()
         cfg = yaml.safe_load(config_path.read_text())
         assert cfg["mode"] == "strict"
+        assert cfg["tool_guard_profile"] == "balanced"
         assert cfg["drivers"]["tool_guard"] is True
 
     def test_custom_provider_flow(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         inputs = iter([
-            "4",                           # custom
+            "6",                           # custom
             "https://my-llm.example.com",  # custom URL
             "sk-test123",                  # api key
             "2",                           # audit mode
+            "3",                           # paranoid profile
         ])
         with patch("builtins.input", lambda _: next(inputs)):
             with patch("app.init_config._store_key") as mock_store:
@@ -74,6 +80,7 @@ class TestRunInit:
 
         cfg = yaml.safe_load((tmp_path / "config.yaml").read_text())
         assert cfg["mode"] == "audit"
+        assert cfg["tool_guard_profile"] == "paranoid"
 
     def test_anthropic_provider(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -81,9 +88,11 @@ class TestRunInit:
             "2",       # anthropic
             "",        # skip api key
             "1",       # strict
+            "2",       # strict profile
         ])
         with patch("builtins.input", lambda _: next(inputs)):
             run_init()
 
         cfg = yaml.safe_load((tmp_path / "config.yaml").read_text())
+        assert cfg["tool_guard_profile"] == "strict"
         assert cfg["drivers"]["secret_guard"] is True

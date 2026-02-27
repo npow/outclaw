@@ -86,7 +86,7 @@ Prometheus metrics (blocked/allowed per guard, latency), webhook alerting, struc
 Dockerfile, Docker Compose with upstream provider examples, Kubernetes Helm chart.
 
 ### P3.3: Clean up dead code
-Remove `app/core/pipeline.py` (legacy BaseDriver/SafetyPipeline, unused by active system).
+Completed: removed `app/core/pipeline.py` (legacy BaseDriver/SafetyPipeline, unused by active system).
 
 ---
 

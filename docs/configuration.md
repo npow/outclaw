@@ -11,7 +11,7 @@ outclaw init    # creates config.yaml in current directory
 ## Global Settings
 
 ```yaml
-mode: strict       # strict = block threats, audit = log only (for testing)
+mode: strict       # strict = block/redact threats, audit = log only (no mutation)
 
 drivers:
   tool_guard: true       # dangerous commands
@@ -98,6 +98,8 @@ Blocks dangerous shell commands and patterns.
 | **Deobfuscation** | Strips Unicode tricks, empty quotes, hex escapes |
 
 ```yaml
+tool_guard_profile: balanced   # balanced, strict, paranoid
+
 # Default: blocklist mode (block known-bad, allow everything else)
 tool_guard_blocklist:
   - 'rm\s+-[rRf]+'           # recursive delete
@@ -113,6 +115,11 @@ tool_guard_allowed_commands:
   - 'git'
   # when set, ONLY these commands are permitted
 ```
+
+`tool_guard_profile` controls AST-level verb blocking strictness:
+- `balanced`: lower-friction defaults for common coding workflows.
+- `strict`: broader command-verb blocking.
+- `paranoid`: strict + wrapper/context commands.
 
 ---
 
@@ -239,3 +246,14 @@ workspace_guard:
 
 ml_guard: light
 ```
+
+---
+
+## Proxy Approval Artifacts
+
+Outclaw runs as a non-interactive proxy. For high-risk actions, use prior authorization artifacts rather than runtime prompts.
+
+See [Proxy Approval Artifacts Spec](proxy-approval-spec.md) for:
+- Capability token schema (`X-Outclaw-Capability`)
+- Deterministic error contract (`outclaw.approval_required`)
+- Retry flow and exception bundle model

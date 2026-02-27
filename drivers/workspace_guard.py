@@ -393,8 +393,11 @@ class WorkspaceGuard(OutclawGuardrail):
                     logger.warning(f"🛡️ [SOFT BLOCK] WorkspaceGuard: {error_msg}")
 
             if blocked_msgs:
-                msg.tool_calls = safe_calls or None
-                current_content = msg.content or ""
-                msg.content = (current_content + "\n" + "\n".join(blocked_msgs)).strip()
+                if self.is_audit_mode:
+                    logger.warning("🛡️ WorkspaceGuard: blocked action detected (audit mode, passthrough)")
+                else:
+                    msg.tool_calls = safe_calls or None
+                    current_content = msg.content or ""
+                    msg.content = (current_content + "\n" + "\n".join(blocked_msgs)).strip()
 
         return response

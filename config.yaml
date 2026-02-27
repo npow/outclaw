@@ -52,6 +52,8 @@ pii_guard_config:
 # 🚫 Tool Guard Blocklist (Expanded High-Security Profile)
 # Based on GTFOBins - These binaries can spawn shells or bypass restrictions.
 # ------------------------------------------------------------------------------
+tool_guard_profile: balanced   # balanced (default), strict, paranoid
+
 tool_guard_blocklist:
   # Destructive
   - 'rm\s+-[rRf]+'         # Recursive delete
@@ -119,7 +121,7 @@ tool_guard_blocklist:
   - '\b(timeout|time)\s+\d*\s*(rm|dd|mkfs)\b'
 
   # Source/dot execution of remote content
-  - '\b(source|\.)\s+<\('
+  - '(?:^|\s)(source|\.)\s+<\('
 
   # Downloaders (Malware droppers)
   # RELAXED: Allowed by default. NetworkGuard will filter the URLs.

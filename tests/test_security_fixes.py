@@ -10,6 +10,7 @@ import os
 import base64
 import hashlib
 import pytest
+from unittest.mock import patch
 from drivers.tool_guard import ToolGuard
 from drivers.workspace_guard import WorkspaceGuard
 from drivers.secret_guard import SecretGuard
@@ -221,6 +222,19 @@ class TestSecurityFixes:
         # /dev/kmem (kernel memory) should be blocked
         is_safe, error = wg._check_single_path("/dev/kmem")
         assert not is_safe, "/dev/kmem should be blocked"
+
+    def test_detect_secrets_allowlist_only_skips_exact_secret(self, config):
+        """Allowlisted text in payload must not skip unrelated detected secrets."""
+        sg = SecretGuard(outclaw_config={**config, "secret_guard_allowlist": ["safe-token"]})
+
+        class FakeSecret:
+            type = "FakeSecret"
+            secret_value = "evil-token"
+
+        with patch("drivers.secret_guard.scan_line", return_value=[FakeSecret()]):
+            with pytest.raises(Exception) as exc:
+                sg._scan_with_detect_secrets("prefix safe-token suffix")
+            assert "secret leak detected" in str(exc.value).lower()
 
     def test_missing_path_keys(self, config):
         """Test that destination, output, dir, directory keys are checked (W6)."""
@@ -702,4 +716,3 @@ class TestSecurityFixes:
         variants = get_text_variants(encoded)
 
         assert any("shadow" in v for v in variants)
-

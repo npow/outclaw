@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Set
 
 from drivers.base import OutclawGuardrail, logger
 from drivers.deobfuscate import normalize_shell, strip_invisible, normalize_unicode
@@ -78,15 +78,15 @@ class ToolGuard(OutclawGuardrail):
         # Timeout/time wrappers with dangerous commands
         r'\b(timeout|time)\s+\d*\s*(rm|dd|mkfs)\b',
         # Source/dot execution of remote content
-        r'\b(source|\.)\s+<\(',
+        r'(?:^|\s)(source|\.)\s+<\(',
         # Coproc/background
         r'coproc\s+\{',
         r'rm\s+.*\s+&\s*$',
     ]
 
-    # Blocked command verbs (used by bashlex AST scanning)
-    # This is the "source of truth" - regex patterns above are fallback
-    BLOCKED_COMMANDS: Set[str] = {
+    # Blocked command verbs (used by bashlex AST scanning).
+    # Use profile-specific sets to tune false-positive/strictness tradeoffs.
+    STRICT_BLOCKED_COMMANDS: Set[str] = {
         # Destructive
         "rm", "rmdir", "unlink", "shred",
         "mkfs", "fdisk", "parted",
@@ -111,13 +111,26 @@ class ToolGuard(OutclawGuardrail):
         "awk", "gawk", "nawk",
     }
 
-    # Commands that are dangerous only in certain contexts
-    CONTEXT_DANGEROUS_COMMANDS: Set[str] = {
-        "find",  # Dangerous with -exec or -delete
-        "xargs",  # Dangerous when piping to rm, etc.
-        "parallel",
-        "env", "command", "builtin",  # Wrappers
-        "timeout", "time", "nice", "ionice",  # Can wrap dangerous commands
+    # Lower-friction profile for coding workflows: keep hard-risk verbs only.
+    BALANCED_BLOCKED_COMMANDS: Set[str] = {
+        "rm", "rmdir", "unlink", "shred",
+        "mkfs", "fdisk", "parted", "dd",
+        "nc", "ncat", "netcat", "socat", "telnet", "ssh", "scp", "sftp", "rsync",
+        "sudo", "su", "doas", "pkexec",
+        "insmod", "modprobe", "rmmod",
+    }
+
+    # Highest-friction profile: strict commands plus context wrappers.
+    PARANOID_EXTRA_COMMANDS: Set[str] = {
+        "find", "xargs", "parallel",
+        "env", "command", "builtin",
+        "timeout", "time", "nice", "ionice",
+    }
+
+    PROFILE_COMMANDS = {
+        "balanced": BALANCED_BLOCKED_COMMANDS,
+        "strict": STRICT_BLOCKED_COMMANDS,
+        "paranoid": STRICT_BLOCKED_COMMANDS | PARANOID_EXTRA_COMMANDS,
     }
 
     def __init__(self, outclaw_config=None, **kwargs):
@@ -131,9 +144,19 @@ class ToolGuard(OutclawGuardrail):
         )
         self.blocklist = [re.compile(p) for p in custom_blocklist]
 
-        # Allow users to extend blocked commands via config
+        # Command policy profile controls AST-level command blocking strictness.
+        self.profile = str(self.outclaw_config.get("tool_guard_profile", "balanced")).lower()
+        profile_commands = self.PROFILE_COMMANDS.get(self.profile)
+        if profile_commands is None:
+            logger.warning(
+                f"ToolGuard: Unknown profile '{self.profile}', falling back to 'balanced'"
+            )
+            self.profile = "balanced"
+            profile_commands = self.PROFILE_COMMANDS["balanced"]
+
+        # Allow users to extend blocked commands via config.
         extra_blocked = self.outclaw_config.get("tool_guard_blocked_commands", [])
-        self.blocked_commands = self.BLOCKED_COMMANDS | set(extra_blocked)
+        self.blocked_commands = set(profile_commands) | set(extra_blocked)
 
         # Allow-list mode: if set, ONLY these commands are permitted
         self.allowed_commands = set(self.outclaw_config.get("tool_guard_allowed_commands", []))
@@ -141,6 +164,10 @@ class ToolGuard(OutclawGuardrail):
 
         if self.use_allowlist:
             logger.info(f"ToolGuard: Allow-list mode ENABLED with {len(self.allowed_commands)} commands")
+        else:
+            logger.info(
+                f"ToolGuard: Profile '{self.profile}' with {len(self.blocked_commands)} blocked AST commands"
+            )
         if BASHLEX_AVAILABLE:
             logger.info("ToolGuard: bashlex AST parsing ENABLED")
 

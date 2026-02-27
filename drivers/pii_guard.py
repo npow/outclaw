@@ -171,7 +171,10 @@ class PIIGuard(OutclawGuardrail):
                     continue
                 redacted = self._redact(raw_content)
                 if redacted != raw_content:
-                    msg["content"] = redacted
+                    if self.is_audit_mode:
+                        logger.warning("🛡️ PIIGuard: PII detected in request (audit mode, passthrough)")
+                    else:
+                        msg["content"] = redacted
             elif isinstance(raw_content, list):
                 for block in raw_content:
                     if isinstance(block, dict) and block.get("type") == "text":
@@ -179,7 +182,10 @@ class PIIGuard(OutclawGuardrail):
                         if text:
                             redacted = self._redact(text)
                             if redacted != text:
-                                block["text"] = redacted
+                                if self.is_audit_mode:
+                                    logger.warning("🛡️ PIIGuard: PII detected in request block (audit mode, passthrough)")
+                                else:
+                                    block["text"] = redacted
 
         return data
 
@@ -195,7 +201,10 @@ class PIIGuard(OutclawGuardrail):
 
             redacted = self._redact(content)
             if redacted != content:
-                logger.warning("🛡️ PIIGuard: PII detected in LLM response, redacting")
-                msg.content = redacted
+                if self.is_audit_mode:
+                    logger.warning("🛡️ PIIGuard: PII detected in LLM response (audit mode, passthrough)")
+                else:
+                    logger.warning("🛡️ PIIGuard: PII detected in LLM response, redacting")
+                    msg.content = redacted
 
         return response

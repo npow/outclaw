@@ -235,7 +235,8 @@ class SecretGuard(OutclawGuardrail):
         settings = {"plugins_used": self.DETECT_SECRETS_PLUGINS}
         with transient_settings(settings):
             for secret in scan_line(text):
-                if any(allowed in text for allowed in self.allowlist):
+                secret_value = getattr(secret, "secret_value", "")
+                if secret_value and secret_value in self.allowlist:
                     continue
                 self._enforce(
                     f"Secret Leak Detected! detect-secrets: {secret.type}",
