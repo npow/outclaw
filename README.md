@@ -1,3 +1,6 @@
+[![Docs](https://img.shields.io/badge/docs-mintlify-18a34a?style=flat-square)](https://mintlify.com/npow/outclaw)
+
+
 <p align="center">
   🦞🤠 <strong>Outclaw</strong> 🤠🦞<br>
   <em>The shellriff every lobster needs.</em><br>
@@ -44,6 +47,7 @@ pip install outclaw
 outclaw warmup                                        # download models (~90MB, one time)
 UPSTREAM_BASE_URL=https://api.openai.com/v1 outclaw   # start the lobster tank 🦞
 # point your agent at localhost:8080. done.
+
 ```
 
 **Supported providers:**
